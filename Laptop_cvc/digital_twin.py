@@ -1,10 +1,11 @@
-"""Graphical digital twin for the three-zone SVA platform."""
+"""Graphical digital twin for simulation or a physical ESP32 gateway."""
 
+import argparse
 import tkinter as tk
 from tkinter import ttk
 
 from cvc_platform import CentralVehicleComputer, ZONES
-from esp32_gateway import ESP32Gateway, SimulatedCANBus
+from esp32_gateway import ESP32Gateway, SerialGatewayTransport, SimulatedGatewayTransport
 from zonal_ecu import ZonalECU
 
 BG = "#101820"
@@ -16,16 +17,17 @@ AMBER = "#f3b33d"
 
 
 class DigitalTwin:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, port: str | None = None, baudrate: int = 115200) -> None:
         self.root = root
         self.root.title("SVA Digital Twin | Central Vehicle Computer")
         self.root.geometry("1050x720")
         self.root.configure(bg=BG)
 
-        self.bus = SimulatedCANBus()
-        self.gateway = ESP32Gateway(self.bus)
+        transport = SerialGatewayTransport(port, baudrate) if port else SimulatedGatewayTransport()
+        self.gateway = ESP32Gateway(transport)
         self.cvc = CentralVehicleComputer(self.gateway)
-        self.ecus = {zone: ZonalECU(zone) for zone in ZONES}
+        self.ecus = {zone: ZonalECU(zone) for zone in ZONES} if not port else {}
+        self.hardware_mode = port is not None
         self.elapsed = 0.0
         self.zone_items: dict[str, int] = {}
         self.door_items: dict[str, int] = {}
@@ -137,17 +139,24 @@ class DigitalTwin:
         self.diagnostic_label.pack(side="right", fill="x", expand=True)
 
     def toggle_ecu(self, zone: str) -> None:
-        self.ecus[zone].online = not self.ecus[zone].online
+        if not self.hardware_mode:
+            self.ecus[zone].online = not self.ecus[zone].online
 
     def toggle_gateway(self) -> None:
-        self.gateway.connected = not self.gateway.connected
+        if isinstance(self.gateway.transport, SimulatedGatewayTransport):
+            self.gateway.transport.connected = not self.gateway.transport.connected
 
     def restore_network(self) -> None:
-        self.gateway.connected = True
+        if self.hardware_mode:
+            return
+        if isinstance(self.gateway.transport, SimulatedGatewayTransport):
+            self.gateway.transport.connected = True
         for ecu in self.ecus.values():
             ecu.online = True
 
     def toggle_doors(self) -> None:
+        if self.hardware_mode:
+            return
         cabin = self.ecus["CABIN"].telemetry(self.elapsed)
         if cabin is None:
             return
@@ -156,6 +165,8 @@ class DigitalTwin:
         self.ecus["CABIN"].door_state = new_state
 
     def toggle_seatbelts(self) -> None:
+        if self.hardware_mode:
+            return
         cabin = self.ecus["CABIN"].telemetry(self.elapsed)
         if cabin is None:
             return
@@ -164,11 +175,14 @@ class DigitalTwin:
         self.ecus["CABIN"].belt_state = new_state
 
     def tick(self) -> None:
-        for ecu in self.ecus.values():
-            for frame in (ecu.heartbeat(self.elapsed), ecu.telemetry(self.elapsed)):
-                if frame and self.gateway.connected:
-                    self.gateway.send(frame)
-        self.cvc.poll(self.elapsed)
+        if not self.hardware_mode:
+            for ecu in self.ecus.values():
+                for frame in (ecu.heartbeat(self.elapsed), ecu.telemetry(self.elapsed)):
+                    if frame and self.gateway.connected:
+                        self.gateway.send(frame)
+            self.cvc.poll(self.elapsed)
+        else:
+            self.cvc.poll()
         self._render()
         self.elapsed += 0.5
         self.root.after(500, self.tick)
@@ -209,6 +223,10 @@ class DigitalTwin:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run the SVA digital twin")
+    parser.add_argument("--port", help="ESP32 serial port")
+    parser.add_argument("--baud", type=int, default=115200)
+    args = parser.parse_args()
     root = tk.Tk()
-    DigitalTwin(root)
+    DigitalTwin(root, args.port, args.baud)
     root.mainloop()

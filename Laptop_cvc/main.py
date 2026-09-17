@@ -1,31 +1,43 @@
-"""Console demo for the STM32 zonal ECU -> ESP32 CAN -> laptop CVC path."""
+"""Console demo for simulation or a physical ESP32 CAN gateway."""
 
+import argparse
 import time
 
 from cvc_platform import CentralVehicleComputer
-from esp32_gateway import ESP32Gateway, SimulatedCANBus
+from esp32_gateway import (
+    ESP32Gateway,
+    SerialGatewayTransport,
+    SimulatedGatewayTransport,
+)
 from zonal_ecu import ZonalECU
 
 
 def main() -> None:
-    bus = SimulatedCANBus()
-    gateway = ESP32Gateway(bus)
-    cvc = CentralVehicleComputer(gateway)
-    ecus = [ZonalECU(zone) for zone in ("FRONT", "CABIN", "REAR")]
+    parser = argparse.ArgumentParser(description="Run the laptop CVC")
+    parser.add_argument("--port", help="ESP32 serial port, for example /dev/cu.usbserial-0001")
+    parser.add_argument("--baud", type=int, default=115200)
+    args = parser.parse_args()
 
-    print("Three-zone SVA platform simulation")
+    transport = (
+        SerialGatewayTransport(args.port, args.baud)
+        if args.port
+        else SimulatedGatewayTransport()
+    )
+    gateway = ESP32Gateway(transport)
+    cvc = CentralVehicleComputer(gateway)
+    ecus = [ZonalECU(zone) for zone in ("FRONT", "CABIN", "REAR")] if not args.port else []
+
+    print("Three-zone SVA CVC")
     print("STM32 ECUs -> CAN bus -> ESP32 gateway -> Central Vehicle Computer")
 
     started = time.monotonic()
-    for _ in range(5):
-        now = time.monotonic()
-        elapsed = now - started
+    while args.port or time.monotonic() - started < 5:
+        elapsed = time.monotonic() - started
         for ecu in ecus:
-            if ecu.zone != "REAR" or elapsed < 2:
-                for frame in (ecu.heartbeat(elapsed), ecu.telemetry(elapsed)):
-                    if frame:
-                        gateway.send(frame)
-        cvc.poll(now)
+            for frame in (ecu.heartbeat(elapsed), ecu.telemetry(elapsed)):
+                if frame:
+                    gateway.send(frame)
+        cvc.poll()
         print(
             " | ".join(
                 [f"{zone}: {cvc.zones[zone].status}" for zone in cvc.zones]
@@ -34,8 +46,9 @@ def main() -> None:
         )
         time.sleep(1)
 
-    for fault in cvc.diagnostics():
-        print(f"FAULT {fault}")
+    if not args.port:
+        for fault in cvc.diagnostics():
+            print(f"FAULT {fault}")
 
 
 if __name__ == "__main__":
