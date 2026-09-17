@@ -19,7 +19,10 @@ python digital_twin.py
 
 The console demo intentionally stops sending the rear ECU heartbeat after two
 seconds, allowing the CVC heartbeat timeout and diagnostic code to be observed.
-The digital twin continuously renders the same `CentralVehicleComputer` state.
+The digital twin opens a graphical vehicle model showing the Front, Cabin, and
+Rear zones, CAN identifiers, live ECU health, telemetry, diagnostics, and
+fault-injection controls. It continuously renders the same
+`CentralVehicleComputer` state used by the console simulation.
 
 ## CAN application protocol
 
