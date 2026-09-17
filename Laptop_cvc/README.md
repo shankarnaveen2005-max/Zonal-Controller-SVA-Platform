@@ -42,10 +42,11 @@ On Windows, use a port such as `COM5`. Install the serial dependency once with
 The console demo runs the complete simulated three-zone network. Use the
 digital twin fault-injection controls to exercise ECU, gateway, door, and
 seat-belt failures.
-The digital twin opens a top-view car graphic showing the Front, Cabin, and
-Rear zones, CAN identifiers, four door states, four seat-belt states, live ECU
-health, telemetry, diagnostics, and fault-injection controls. Green doors are
-closed and green belt lines are worn; red indicates open or not worn. It
+The digital twin opens a spacious top-view car replica with a body outline and
+clearly separated Front, Cabin, and Rear zones. It shows CAN identifiers, four
+door states, four seat-belt states, live ECU health, telemetry, diagnostics,
+and fault-injection controls. Green doors are closed and green belt lines are
+worn; red indicates open or not worn. It
 continuously renders the same
 `CentralVehicleComputer` state used by the console simulation.
 

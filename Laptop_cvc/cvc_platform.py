@@ -4,7 +4,12 @@ from dataclasses import dataclass, field
 import time
 from typing import Any
 
-from can_protocol import CANFrame, frame_zone
+from can_protocol import (
+    CANFrame,
+    frame_zone,
+    message_id,
+    recovery_frame,
+)
 from esp32_gateway import ESP32Gateway
 
 
@@ -14,11 +19,10 @@ from esp32_gateway import ESP32Gateway
 
 ZONES = ("FRONT", "CABIN", "REAR")
 
-# Project-specific Diagnostic Trouble Codes
 DTC_CODES = {
     "FRONT": "DTC-CAN-101",
     "CABIN": "DTC-CAN-201",
-    "REAR": "DTC-CAN-301"
+    "REAR": "DTC-CAN-301",
 }
 
 
@@ -32,6 +36,10 @@ class ZoneState:
     last_heartbeat: float | None = None
     telemetry: dict[str, Any] = field(default_factory=dict)
 
+    # Self-healing information
+    recovery_status: str = "IDLE"
+    recovery_attempts: int = 0
+
 
 # ============================================================
 # CENTRAL VEHICLE COMPUTER
@@ -42,13 +50,12 @@ class CentralVehicleComputer:
     def __init__(
         self,
         gateway: ESP32Gateway,
-        heartbeat_timeout_s: float = 3.0
+        heartbeat_timeout_s: float = 3.0,
     ) -> None:
 
         self.gateway = gateway
         self.heartbeat_timeout_s = heartbeat_timeout_s
 
-        # Create state storage for all three zonal ECUs
         self.zones = {
             zone: ZoneState()
             for zone in ZONES
@@ -65,12 +72,10 @@ class CentralVehicleComputer:
 
         now = time.monotonic() if now is None else now
 
-        # Receive CAN frames through ESP32 Gateway
         for frame in self.gateway.receive():
             self._process_frame(frame, now)
 
-        # Check heartbeat timeout
-        for state in self.zones.values():
+        for zone, state in self.zones.items():
 
             if (
                 state.last_heartbeat is None
@@ -80,18 +85,17 @@ class CentralVehicleComputer:
 
 
     # ========================================================
-    # PROCESS INDIVIDUAL CAN FRAME
+    # PROCESS CAN FRAME
     # ========================================================
 
     def _process_frame(
         self,
         frame: CANFrame,
-        now: float
+        now: float,
     ) -> None:
 
         zone = frame_zone(frame.arbitration_id)
 
-        # Reject invalid CAN frames
         if zone is None or frame.payload.get("zone") != zone:
 
             self.last_error = (
@@ -103,26 +107,67 @@ class CentralVehicleComputer:
 
         state = self.zones[zone]
 
-        # ----------------------------------------------------
-        # HEARTBEAT MESSAGE
-        # ----------------------------------------------------
-
-        if frame.arbitration_id % 0x100 == 1:
+        # HEARTBEAT
+        if frame.arbitration_id == message_id(zone, "HEARTBEAT"):
 
             state.last_heartbeat = now
             state.status = "ONLINE"
 
-        # ----------------------------------------------------
-        # TELEMETRY MESSAGE
-        # ----------------------------------------------------
+            # Verify successful recovery
+            if state.recovery_status in (
+                "REQUESTED",
+                "WAITING"
+            ):
+                state.recovery_status = "RECOVERED"
 
-        else:
+        # TELEMETRY
+        elif frame.arbitration_id == message_id(
+            zone,
+            "TELEMETRY"
+        ):
 
             state.telemetry = {
                 key: value
                 for key, value in frame.payload.items()
                 if key != "zone"
             }
+
+        # RECOVERY
+        elif frame.arbitration_id == message_id(
+            zone,
+            "RECOVERY"
+        ):
+            pass
+
+
+    # ========================================================
+    # SELF-HEALING / AUTONOMOUS RECOVERY
+    # ========================================================
+
+    def request_recovery(self, zone: str) -> None:
+
+        if zone not in self.zones:
+            raise ValueError(
+                f"Unknown zonal ECU: {zone}"
+            )
+
+        state = self.zones[zone]
+
+        if state.status == "ONLINE":
+            return
+
+        if not self.gateway.connected:
+            state.recovery_status = "FAILED"
+            return
+
+        state.recovery_attempts += 1
+        state.recovery_status = "REQUESTED"
+
+        frame = recovery_frame(zone)
+
+        self.gateway.send(frame)
+
+        state.recovery_status = "WAITING"
 
 
     # ========================================================
@@ -139,7 +184,7 @@ class CentralVehicleComputer:
 
 
     # ========================================================
-    # OVERALL VEHICLE NETWORK STATUS
+    # NETWORK STATUS
     # ========================================================
 
     @property
@@ -164,7 +209,6 @@ class CentralVehicleComputer:
 
         faults = []
 
-        # Check individual zonal ECU communication
         for zone in ZONES:
 
             if self.zones[zone].status != "ONLINE":
@@ -174,7 +218,6 @@ class CentralVehicleComputer:
                     f"{zone.title()} Zonal ECU communication lost"
                 )
 
-        # Check ESP32 Gateway
         if not self.gateway.connected:
 
             faults.append(
@@ -182,7 +225,6 @@ class CentralVehicleComputer:
                 "ESP32 Gateway communication lost"
             )
 
-        # Check invalid CAN messages
         if self.last_error:
 
             faults.append(
@@ -190,3 +232,4 @@ class CentralVehicleComputer:
             )
 
         return faults
+    
