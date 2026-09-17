@@ -16,6 +16,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the laptop CVC")
     parser.add_argument("--port", help="ESP32 serial port, for example /dev/cu.usbserial-0001")
     parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument(
+        "--duration",
+        type=float,
+        default=5.0,
+        help="simulation run time in seconds; ignored in hardware mode",
+    )
     args = parser.parse_args()
 
     transport = (
@@ -31,7 +37,7 @@ def main() -> None:
     print("STM32 ECUs -> CAN bus -> ESP32 gateway -> Central Vehicle Computer")
 
     started = time.monotonic()
-    while args.port or time.monotonic() - started < 5:
+    while args.port or time.monotonic() - started < args.duration:
         elapsed = time.monotonic() - started
         for ecu in ecus:
             for frame in (ecu.heartbeat(elapsed), ecu.telemetry(elapsed)):

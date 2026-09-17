@@ -18,6 +18,16 @@ python digital_twin.py
 ```
 
 Simulation is the default, so software development does not require hardware.
+The console simulation runs for five seconds by default and keeps all three
+simulated ECUs online. It does not intentionally force a Rear ECU timeout;
+use the digital twin fault-injection controls or hardware heartbeat testing
+when you want to verify an ECU communication fault. To change the simulation
+duration:
+
+```bash
+python main.py --duration 8
+```
+
 When the ESP32 gateway is connected by USB, run the same applications in
 hardware mode:
 
