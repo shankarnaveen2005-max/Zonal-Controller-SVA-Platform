@@ -28,6 +28,8 @@ class DigitalTwin:
         self.ecus = {zone: ZonalECU(zone) for zone in ZONES}
         self.elapsed = 0.0
         self.zone_items: dict[str, int] = {}
+        self.door_items: dict[str, int] = {}
+        self.belt_items: dict[str, int] = {}
 
         self._build_header()
         body = tk.Frame(root, bg=BG)
@@ -55,15 +57,34 @@ class DigitalTwin:
             font=("Arial", 11, "bold"), padx=12, pady=12,
         )
         panel.pack(side="left", fill="both", expand=True, padx=(0, 10))
-        self.canvas = tk.Canvas(panel, width=640, height=330, bg="#15232d", highlightthickness=0)
+        self.canvas = tk.Canvas(panel, width=640, height=390, bg="#15232d", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
-        self.canvas.create_text(320, 22, text="FRONT", fill="#8fa6b3", font=("Arial", 10, "bold"))
-        self.canvas.create_text(320, 308, text="REAR", fill="#8fa6b3", font=("Arial", 10, "bold"))
-        self._zone("FRONT", 85, 42, 555, 120, "0x101 / 0x102")
-        self._zone("CABIN", 125, 132, 515, 230, "0x201 / 0x202")
-        self._zone("REAR", 85, 242, 555, 288, "0x301 / 0x302")
-        self.canvas.create_line(60, 165, 580, 165, fill="#395361", dash=(4, 4))
-        self.canvas.create_line(60, 250, 580, 250, fill="#395361", dash=(4, 4))
+        self.canvas.create_text(320, 17, text="FRONT", fill="#8fa6b3", font=("Arial", 10, "bold"))
+        self.canvas.create_text(320, 367, text="REAR", fill="#8fa6b3", font=("Arial", 10, "bold"))
+        self._zone("FRONT", 205, 35, 435, 105, "0x101 / 0x102")
+        self._zone("CABIN", 185, 112, 455, 285, "0x201 / 0x202")
+        self._zone("REAR", 205, 292, 435, 347, "0x301 / 0x302")
+        self._draw_car_details()
+
+    def _draw_car_details(self) -> None:
+        """Draw the top-view doors and four seats inside the cabin zone."""
+        for side, x in (("left", 178), ("right", 462)):
+            for position, y in (("front", 135), ("rear", 220)):
+                key = f"{position}_{side}"
+                self.door_items[key] = self.canvas.create_rectangle(
+                    x, y, x + (10 if side == "left" else -10), y + 58,
+                    fill="#28563f", outline=GREEN, width=2,
+                )
+        seats = {
+            "driver": (245, 137), "front_passenger": (345, 137),
+            "rear_left": (245, 220), "rear_right": (345, 220),
+        }
+        for key, (x, y) in seats.items():
+            self.canvas.create_rectangle(x, y, x + 48, y + 55, fill="#344b59", outline="#91aab5")
+            self.belt_items[key] = self.canvas.create_line(
+                x + 8, y + 8, x + 40, y + 47, fill=GREEN, width=4,
+            )
+        self.canvas.create_text(320, 199, text="4-SEAT CABIN", fill="#b9ced6", font=("Arial", 9, "bold"))
 
     def _zone(self, zone: str, x1: int, y1: int, x2: int, y2: int, can_ids: str) -> None:
         item = self.canvas.create_rectangle(x1, y1, x2, y2, fill="#244936", outline=GREEN, width=2)
@@ -83,6 +104,14 @@ class DigitalTwin:
         self.health_label.pack(pady=(4, 15))
         self.gateway_label = tk.Label(panel, fg=TEXT, bg=PANEL, justify="left", font=("Arial", 10))
         self.gateway_label.pack(anchor="w", pady=4)
+        ttk.Separator(panel).pack(fill="x", pady=12)
+        tk.Label(panel, text="CABIN CONTROLS", fg="#6dd5fa", bg=PANEL,
+                 font=("Arial", 10, "bold")).pack(anchor="w")
+        for label, action in (
+            ("Toggle all doors", self.toggle_doors),
+            ("Toggle all seat belts", self.toggle_seatbelts),
+        ):
+            ttk.Button(panel, text=label, command=action).pack(fill="x", pady=3)
         ttk.Separator(panel).pack(fill="x", pady=12)
         tk.Label(panel, text="FAULT INJECTION", fg="#f3b33d", bg=PANEL,
                  font=("Arial", 10, "bold")).pack(anchor="w")
@@ -118,6 +147,22 @@ class DigitalTwin:
         for ecu in self.ecus.values():
             ecu.online = True
 
+    def toggle_doors(self) -> None:
+        cabin = self.ecus["CABIN"].telemetry(self.elapsed)
+        if cabin is None:
+            return
+        doors = cabin.payload["doors"]
+        new_state = "OPEN" if all(state == "CLOSED" for state in doors.values()) else "CLOSED"
+        self.ecus["CABIN"].door_state = new_state
+
+    def toggle_seatbelts(self) -> None:
+        cabin = self.ecus["CABIN"].telemetry(self.elapsed)
+        if cabin is None:
+            return
+        belts = cabin.payload["seatbelts"]
+        new_state = "WORN" if all(state == "NOT WORN" for state in belts.values()) else "NOT WORN"
+        self.ecus["CABIN"].belt_state = new_state
+
     def tick(self) -> None:
         for ecu in self.ecus.values():
             for frame in (ecu.heartbeat(self.elapsed), ecu.telemetry(self.elapsed)):
@@ -142,11 +187,22 @@ class DigitalTwin:
         front = self.cvc.zones["FRONT"].telemetry
         cabin = self.cvc.zones["CABIN"].telemetry
         rear = self.cvc.zones["REAR"].telemetry
+        doors = cabin.get("doors", {})
+        belts = cabin.get("seatbelts", {})
+        for key, item in self.door_items.items():
+            closed = doors.get(key) == "CLOSED"
+            self.canvas.itemconfigure(item, fill="#28563f" if closed else "#713c40",
+                                      outline=GREEN if closed else RED)
+        for key, item in self.belt_items.items():
+            worn = belts.get(key) == "WORN"
+            self.canvas.itemconfigure(item, fill=GREEN if worn else RED)
         self.telemetry_label.config(text=(
             f"Speed             {front.get('speed_kph', '--')} km/h\n"
             f"Cabin temperature {cabin.get('temperature_c', '--')} °C\n"
             f"Driver            {'DETECTED' if cabin.get('driver_detected') else '--'}\n"
-            f"Front / rear      {front.get('obstacle', '--')} / {rear.get('obstacle', '--')}"
+            f"Front / rear      {front.get('obstacle', '--')} / {rear.get('obstacle', '--')}\n"
+            f"Doors             {sum(value == 'CLOSED' for value in doors.values())}/4 CLOSED\n"
+            f"Seat belts        {sum(value == 'WORN' for value in belts.values())}/4 WORN"
         ))
         faults = self.cvc.diagnostics()
         self.diagnostic_label.config(text="No active faults" if not faults else "\n".join(faults))

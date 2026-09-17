@@ -10,6 +10,8 @@ from can_protocol import CANFrame, message_id
 class ZonalECU:
     zone: str
     online: bool = True
+    door_state: str = "CLOSED"
+    belt_state: str = "WORN"
 
     def heartbeat(self, timestamp: float) -> CANFrame | None:
         if not self.online:
@@ -31,7 +33,18 @@ class ZonalECU:
             "CABIN": {
                 "temperature_c": 26,
                 "driver_detected": True,
-                "seatbelt_fastened": True,
+                "doors": {
+                    "front_left": self.door_state,
+                    "front_right": self.door_state,
+                    "rear_left": self.door_state,
+                    "rear_right": self.door_state,
+                },
+                "seatbelts": {
+                    "driver": self.belt_state,
+                    "front_passenger": self.belt_state,
+                    "rear_left": self.belt_state,
+                    "rear_right": self.belt_state,
+                },
             },
             "REAR": {
                 "obstacle": "CLEAR",
