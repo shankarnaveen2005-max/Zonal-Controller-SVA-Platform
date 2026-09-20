@@ -19,6 +19,7 @@ from esp32_gateway import ESP32Gateway
 
 ZONES = ("FRONT", "CABIN", "REAR")
 
+# Project-defined diagnostic trouble codes
 DTC_CODES = {
     "FRONT": "DTC-CAN-101",
     "CABIN": "DTC-CAN-201",
@@ -72,20 +73,23 @@ class CentralVehicleComputer:
 
         now = time.monotonic() if now is None else now
 
+        # Receive all available CAN frames from ESP32 Gateway
         for frame in self.gateway.receive():
             self._process_frame(frame, now)
 
+        # Check heartbeat timeout for each zonal ECU
         for zone, state in self.zones.items():
 
             if (
                 state.last_heartbeat is None
-                or now - state.last_heartbeat > self.heartbeat_timeout_s
+                or now - state.last_heartbeat
+                > self.heartbeat_timeout_s
             ):
                 state.status = "OFFLINE"
 
 
     # ========================================================
-    # PROCESS CAN FRAME
+    # PROCESS RECEIVED CAN FRAME
     # ========================================================
 
     def _process_frame(
@@ -94,9 +98,15 @@ class CentralVehicleComputer:
         now: float,
     ) -> None:
 
-        zone = frame_zone(frame.arbitration_id)
+        zone = frame_zone(
+            frame.arbitration_id
+        )
 
-        if zone is None or frame.payload.get("zone") != zone:
+        # Validate frame
+        if (
+            zone is None
+            or frame.payload.get("zone") != zone
+        ):
 
             self.last_error = (
                 f"Rejected invalid CAN frame "
@@ -107,36 +117,54 @@ class CentralVehicleComputer:
 
         state = self.zones[zone]
 
-        # HEARTBEAT
-        if frame.arbitration_id == message_id(zone, "HEARTBEAT"):
+        # ====================================================
+        # HEARTBEAT MESSAGE
+        # ====================================================
+
+        if frame.arbitration_id == message_id(
+            zone,
+            "HEARTBEAT",
+        ):
 
             state.last_heartbeat = now
             state.status = "ONLINE"
 
-            # Verify successful recovery
+            # Successful heartbeat after recovery request
+            # verifies that the zonal ECU has recovered.
             if state.recovery_status in (
                 "REQUESTED",
-                "WAITING"
+                "WAITING",
             ):
+
                 state.recovery_status = "RECOVERED"
 
-        # TELEMETRY
+        # ====================================================
+        # TELEMETRY MESSAGE
+        # ====================================================
+
         elif frame.arbitration_id == message_id(
             zone,
-            "TELEMETRY"
+            "TELEMETRY",
         ):
 
             state.telemetry = {
                 key: value
-                for key, value in frame.payload.items()
+                for key, value
+                in frame.payload.items()
                 if key != "zone"
             }
 
-        # RECOVERY
+        # ====================================================
+        # RECOVERY MESSAGE
+        # ====================================================
+
         elif frame.arbitration_id == message_id(
             zone,
-            "RECOVERY"
+            "RECOVERY",
         ):
+
+            # Recovery commands are handled by the
+            # corresponding zonal ECU.
             pass
 
 
@@ -144,29 +172,46 @@ class CentralVehicleComputer:
     # SELF-HEALING / AUTONOMOUS RECOVERY
     # ========================================================
 
-    def request_recovery(self, zone: str) -> None:
+    def request_recovery(
+        self,
+        zone: str,
+    ) -> None:
 
+        # Validate zone
         if zone not in self.zones:
+
             raise ValueError(
                 f"Unknown zonal ECU: {zone}"
             )
 
         state = self.zones[zone]
 
+        # No recovery is required if ECU is already online
         if state.status == "ONLINE":
             return
 
+        # Recovery cannot be transmitted if gateway is down
         if not self.gateway.connected:
+
             state.recovery_status = "FAILED"
             return
 
+        # Increase recovery attempt counter
         state.recovery_attempts += 1
+
         state.recovery_status = "REQUESTED"
 
-        frame = recovery_frame(zone)
+        # Generate recovery CAN command
+        frame = recovery_frame(
+            zone
+        )
 
-        self.gateway.send(frame)
+        # Send through ESP32 Gateway
+        self.gateway.send(
+            frame
+        )
 
+        # Wait for heartbeat confirmation
         state.recovery_status = "WAITING"
 
 
@@ -184,7 +229,7 @@ class CentralVehicleComputer:
 
 
     # ========================================================
-    # NETWORK STATUS
+    # VEHICLE NETWORK STATUS
     # ========================================================
 
     @property
@@ -195,7 +240,10 @@ class CentralVehicleComputer:
             for state in self.zones.values()
         )
 
-        if self.gateway.connected and all_ecus_online:
+        if (
+            self.gateway.connected
+            and all_ecus_online
+        ):
             return "HEALTHY"
 
         return "FAULT DETECTED"
@@ -205,18 +253,31 @@ class CentralVehicleComputer:
     # INTELLIGENT DIAGNOSTICS
     # ========================================================
 
-    def diagnostics(self) -> list[str]:
+    def diagnostics(
+        self,
+    ) -> list[str]:
 
-        faults = []
+        faults: list[str] = []
+
+        # ====================================================
+        # ZONAL ECU COMMUNICATION DIAGNOSTICS
+        # ====================================================
 
         for zone in ZONES:
 
-            if self.zones[zone].status != "ONLINE":
+            state = self.zones[zone]
+
+            if state.status != "ONLINE":
 
                 faults.append(
                     f"{DTC_CODES[zone]}: "
-                    f"{zone.title()} Zonal ECU communication lost"
+                    f"{zone.title()} Zonal ECU "
+                    f"communication lost"
                 )
+
+        # ====================================================
+        # ESP32 GATEWAY DIAGNOSTICS
+        # ====================================================
 
         if not self.gateway.connected:
 
@@ -225,11 +286,15 @@ class CentralVehicleComputer:
                 "ESP32 Gateway communication lost"
             )
 
+        # ====================================================
+        # CAN MESSAGE VALIDATION ERROR
+        # ====================================================
+
         if self.last_error:
 
             faults.append(
-                f"DTC-CAN-000: {self.last_error}"
+                f"DTC-CAN-000: "
+                f"{self.last_error}"
             )
 
         return faults
-    

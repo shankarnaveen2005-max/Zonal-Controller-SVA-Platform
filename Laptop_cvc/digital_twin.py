@@ -10,6 +10,8 @@ Features:
 - CSV data logging
 - ML predictive maintenance
 - Digital Twin visualization
+- Scrollable CVC / ESP32 Gateway control panel
+- OTA firmware update simulation
 """
 
 import argparse
@@ -25,11 +27,11 @@ from esp32_gateway import (
     SimulatedGatewayTransport,
 )
 from zonal_ecu import ZonalECU
-
 from predictive_maintenance import (
     PredictiveMaintenance,
     ConditionData,
 )
+from ota_manager import OTAManager
 
 
 # ============================================================
@@ -64,7 +66,8 @@ class DigitalTwin:
             "SVA Digital Twin | Central Vehicle Computer"
         )
 
-        self.root.geometry("1250x850")
+        self.root.geometry("1400x900")
+        self.root.minsize(1100, 750)
         self.root.configure(bg=BG)
 
         # ====================================================
@@ -107,11 +110,10 @@ class DigitalTwin:
         )
 
         self.hardware_mode = port is not None
-
         self.elapsed = 0.0
 
         # ====================================================
-        # AUTONOMOUS RECOVERY TRACKING
+        # AUTONOMOUS RECOVERY
         # ====================================================
 
         self.recovery_requested = {
@@ -119,26 +121,35 @@ class DigitalTwin:
             for zone in ZONES
         }
 
+        self.manual_faults: set[str] = set()
+
+        self.ecu_controls: dict[
+            str,
+            tk.BooleanVar,
+        ] = {}
+
         # ====================================================
         # ML PREDICTIVE MAINTENANCE
         # ====================================================
 
-        self.predictive_system = PredictiveMaintenance()
+        self.predictive_system = (
+            PredictiveMaintenance()
+        )
 
-        print("\nTraining predictive maintenance model...")
+        print(
+            "\nTraining predictive maintenance model..."
+        )
 
-        accuracy = self.predictive_system.train(
-            samples_per_class=500
+        accuracy = (
+            self.predictive_system.train(
+                samples_per_class=500
+            )
         )
 
         print(
             f"Predictive maintenance model ready. "
             f"Test accuracy: {accuracy * 100:.2f}%\n"
         )
-
-        # ====================================================
-        # SIMULATED CONDITION VALUES
-        # ====================================================
 
         self.condition_data = ConditionData(
             voltage=13.1,
@@ -158,12 +169,36 @@ class DigitalTwin:
         self.degradation_level = 0
 
         # ====================================================
-        # GUI OBJECT STORAGE
+        # OTA UPDATE SYSTEM
         # ====================================================
 
-        self.zone_items: dict[str, int] = {}
-        self.door_items: dict[str, int] = {}
-        self.belt_items: dict[str, int] = {}
+        self.ota_manager = OTAManager()
+
+        self.ota_target = tk.StringVar(
+            value="FRONT"
+        )
+
+        self.ota_new_version = tk.StringVar(
+            value="v1.1.0"
+        )
+
+        self.ota_progress = tk.IntVar(
+            value=0
+        )
+
+        self.ota_status = tk.StringVar(
+            value="IDLE"
+        )
+
+        self.ota_updating = False
+
+        # ====================================================
+        # GUI STORAGE
+        # ====================================================
+
+        self.zone_items = {}
+        self.door_items = {}
+        self.belt_items = {}
 
         # ====================================================
         # BUILD GUI
@@ -172,24 +207,25 @@ class DigitalTwin:
         self._build_header()
 
         body = tk.Frame(
-            root,
+            self.root,
             bg=BG,
+            height=400,
         )
 
         body.pack(
-            fill="both",
-            expand=True,
+            fill="x",
+            expand=False,
             padx=18,
-            pady=8,
+            pady=(5, 5),
         )
+
+        body.pack_propagate(False)
 
         self._build_vehicle_view(body)
         self._build_sidebar(body)
         self._build_bottom_panel()
 
-        # Start application
         self.tick()
-
 
     # ========================================================
     # HEADER
@@ -205,7 +241,7 @@ class DigitalTwin:
         header.pack(
             fill="x",
             padx=22,
-            pady=(15, 4),
+            pady=(12, 4),
         )
 
         tk.Label(
@@ -222,12 +258,12 @@ class DigitalTwin:
                 "ZONAL CONTROLLER-BASED ARCHITECTURE"
                 "  •  DIGITAL TWIN"
                 "  •  ML PREDICTIVE MAINTENANCE"
+                "  •  OTA"
             ),
             fg=TEXT,
             bg=BG,
             font=("Arial", 10),
         ).pack(anchor="w")
-
 
     # ========================================================
     # VEHICLE VIEW
@@ -245,7 +281,7 @@ class DigitalTwin:
             bg=PANEL,
             font=("Arial", 11, "bold"),
             padx=12,
-            pady=12,
+            pady=8,
         )
 
         panel.pack(
@@ -257,8 +293,8 @@ class DigitalTwin:
 
         self.canvas = tk.Canvas(
             panel,
-            width=720,
-            height=600,
+            width=500,
+            height=350,
             bg="#15232d",
             highlightthickness=0,
         )
@@ -268,81 +304,212 @@ class DigitalTwin:
             expand=True,
         )
 
-        self.canvas.create_text(360, 18, text="FRONT OF VEHICLE",
-                                fill="#b8cbd3", font=("Arial", 10, "bold"))
-        self.canvas.create_text(360, 578, text="REAR OF VEHICLE",
-                                fill="#b8cbd3", font=("Arial", 10, "bold"))
-        self._rounded_rectangle(175, 32, 545, 565, 46, fill="#0d151b", outline="#6e8792", width=3)
+        self.canvas.create_text(
+            250,
+            15,
+            text="FRONT OF VEHICLE",
+            fill="#b8cbd3",
+            font=("Arial", 10, "bold"),
+        )
+
+        self.canvas.create_text(
+            250,
+            335,
+            text="REAR OF VEHICLE",
+            fill="#b8cbd3",
+            font=("Arial", 10, "bold"),
+        )
+
+        # Vehicle body
+        self.canvas.create_polygon(
+            150, 30,
+            350, 30,
+            375, 58,
+            375, 295,
+            350, 325,
+            150, 325,
+            125, 295,
+            125, 58,
+            fill="#0b1116",
+            outline="#91aab5",
+            width=3,
+        )
+
+        self.canvas.create_rectangle(
+            157, 42,
+            343, 103,
+            fill="#203b4a",
+            outline=BLUE,
+            width=2,
+        )
+
+        self.canvas.create_polygon(
+            157, 108,
+            343, 108,
+            350, 245,
+            150, 245,
+            fill="#182c37",
+            outline="#557581",
+            width=2,
+        )
+
+        self.canvas.create_line(
+            160, 108,
+            340, 108,
+            fill="#a9c8d3",
+            width=2,
+        )
+
+        self.canvas.create_line(
+            150, 250,
+            350, 250,
+            fill="#557581",
+            width=2,
+        )
+
+        self.canvas.create_rectangle(
+            150, 278,
+            350, 315,
+            fill="#18242b",
+            outline="#557581",
+            width=2,
+        )
+
+        # Wheels
+        for x in (112, 368):
+
+            for y in (82, 235):
+
+                self.canvas.create_oval(
+                    x,
+                    y,
+                    x + 20,
+                    y + 48,
+                    fill="#05080a",
+                    outline="#738b95",
+                    width=2,
+                )
+
+        # Lights
+        for x in (165, 315):
+
+            self.canvas.create_oval(
+                x,
+                34,
+                x + 20,
+                45,
+                fill="#f6d36b",
+                outline="#fff0a8",
+            )
+
+            self.canvas.create_oval(
+                x,
+                310,
+                x + 20,
+                321,
+                fill="#e85a5a",
+                outline="#ff9b9b",
+            )
+
+        self.canvas.create_line(
+            150, 32,
+            350, 32,
+            fill="#d8e7ec",
+            width=3,
+        )
+
+        self.canvas.create_line(
+            150, 323,
+            350, 323,
+            fill="#657f8a",
+            width=3,
+        )
 
         self._zone(
             "FRONT",
-            210,
-            52,
-            510,
-            145,
+            150,
+            42,
+            350,
+            100,
             "0x101 / 0x102",
         )
 
         self._zone(
             "CABIN",
-            195,
-            158,
-            525,
-            430,
+            140,
+            110,
+            360,
+            250,
             "0x201 / 0x202",
         )
 
         self._zone(
             "REAR",
-            210,
-            443,
-            510,
-            545,
+            150,
+            260,
+            350,
+            315,
             "0x301 / 0x302",
         )
 
         self._draw_car_details()
-
 
     # ========================================================
     # VEHICLE DETAILS
     # ========================================================
 
     def _draw_car_details(self) -> None:
-        """Draw separated doors and seats inside the larger top-view body."""
+
         for side, x in (
-            ("left", 183),
-            ("right", 537),
+            ("left", 128),
+            ("right", 372),
         ):
 
             for position, y in (
-                ("front", 185),
-                ("rear", 315),
+                ("front", 125),
+                ("rear", 195),
             ):
 
-                key = f"{position}_{side}"
+                key = (
+                    f"{position}_{side}"
+                )
+
+                x2 = (
+                    x + 8
+                    if side == "left"
+                    else x - 8
+                )
 
                 self.door_items[key] = (
                     self.canvas.create_rectangle(
                         x,
                         y,
-                        x + (
-                            12
-                            if side == "left"
-                            else -12
-                        ),
-                        y + 100,
+                        x2,
+                        y + 50,
                         fill="#28563f",
                         outline=GREEN,
-                        width=3,
+                        width=2,
                     )
                 )
 
+                self.canvas.create_line(
+                    x2,
+                    y + 25,
+                    x2 + (
+                        8
+                        if side == "left"
+                        else -8
+                    ),
+                    y + 25,
+                    fill="#b3c5cc",
+                    width=2,
+                )
+
         seats = {
-            "driver": (265, 190),
-            "front_passenger": (375, 190),
-            "rear_left": (265, 315),
-            "rear_right": (375, 315),
+            "driver": (175, 125),
+            "front_passenger": (275, 125),
+            "rear_left": (175, 195),
+            "rear_right": (275, 195),
         }
 
         for key, (x, y) in seats.items():
@@ -350,8 +517,8 @@ class DigitalTwin:
             self.canvas.create_rectangle(
                 x,
                 y,
-                x + 70,
-                y + 85,
+                x + 50,
+                y + 48,
                 fill="#344b59",
                 outline="#b3c5cc",
                 width=2,
@@ -359,46 +526,22 @@ class DigitalTwin:
 
             self.belt_items[key] = (
                 self.canvas.create_line(
-                    x + 12,
-                    y + 12,
-                    x + 58,
-                    y + 72,
+                    x + 8,
+                    y + 8,
+                    x + 42,
+                    y + 40,
                     fill=GREEN,
-                    width=5,
+                    width=4,
                 )
             )
 
         self.canvas.create_text(
-            320,
-            300,
+            250,
+            185,
             text="CABIN • 4 SEATS",
             fill="#d2e0e5",
             font=("Arial", 10, "bold"),
         )
-        self.canvas.create_text(360, 470, text="Rear zone sensor / actuator area",
-                                fill="#b8cbd3", font=("Arial", 9))
-
-    def _rounded_rectangle(
-        self,
-        x1: int,
-        y1: int,
-        x2: int,
-        y2: int,
-        radius: int,
-        **options: object,
-    ) -> None:
-        """Draw a rounded canvas rectangle from arcs and straight edges."""
-        self.canvas.create_arc(x1, y1, x1 + 2 * radius, y1 + 2 * radius,
-                               start=90, extent=90, style="pieslice", **options)
-        self.canvas.create_arc(x2 - 2 * radius, y1, x2, y1 + 2 * radius,
-                               start=0, extent=90, style="pieslice", **options)
-        self.canvas.create_arc(x1, y2 - 2 * radius, x1 + 2 * radius, y2,
-                               start=180, extent=90, style="pieslice", **options)
-        self.canvas.create_arc(x2 - 2 * radius, y2 - 2 * radius, x2, y2,
-                               start=270, extent=90, style="pieslice", **options)
-        self.canvas.create_rectangle(x1 + radius, y1, x2 - radius, y2, **options)
-        self.canvas.create_rectangle(x1, y1 + radius, x2, y2 - radius, **options)
-
 
     # ========================================================
     # ZONAL ECU GRAPHICS
@@ -428,23 +571,22 @@ class DigitalTwin:
 
         self.canvas.create_text(
             (x1 + x2) / 2,
-            (y1 + y2) / 2 - 7,
+            (y1 + y2) / 2 - 8,
             text=f"{zone} ZONAL ECU",
             fill=TEXT,
-            font=("Arial", 14, "bold"),
+            font=("Arial", 13, "bold"),
         )
 
         self.canvas.create_text(
             (x1 + x2) / 2,
-            (y1 + y2) / 2 + 17,
+            (y1 + y2) / 2 + 16,
             text=can_ids,
             fill="#9fc0ce",
             font=("Arial", 9),
         )
 
-
     # ========================================================
-    # SIDEBAR
+    # SCROLLABLE CVC / ESP32 SIDEBAR
     # ========================================================
 
     def _build_sidebar(
@@ -452,20 +594,175 @@ class DigitalTwin:
         parent: tk.Frame,
     ) -> None:
 
-        panel = tk.LabelFrame(
+        outer_panel = tk.LabelFrame(
             parent,
             text="CVC / ESP32 GATEWAY",
             fg=TEXT,
             bg=PANEL,
             font=("Arial", 11, "bold"),
-            padx=12,
-            pady=12,
-            width=320,
+            padx=4,
+            pady=4,
+            width=350,
         )
 
-        panel.pack(
+        outer_panel.pack(
             side="right",
             fill="y",
+        )
+
+        outer_panel.pack_propagate(False)
+
+        sidebar_canvas = tk.Canvas(
+            outer_panel,
+            bg=PANEL,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+
+        sidebar_scrollbar = ttk.Scrollbar(
+            outer_panel,
+            orient="vertical",
+            command=sidebar_canvas.yview,
+        )
+
+        sidebar_canvas.configure(
+            yscrollcommand=sidebar_scrollbar.set
+        )
+
+        sidebar_scrollbar.pack(
+            side="right",
+            fill="y",
+        )
+
+        sidebar_canvas.pack(
+            side="left",
+            fill="both",
+            expand=True,
+        )
+
+        panel = tk.Frame(
+            sidebar_canvas,
+            bg=PANEL,
+        )
+
+        sidebar_window = (
+            sidebar_canvas.create_window(
+                (0, 0),
+                window=panel,
+                anchor="nw",
+            )
+        )
+
+        def update_scroll_region(
+            event=None,
+        ):
+
+            sidebar_canvas.configure(
+                scrollregion=(
+                    sidebar_canvas.bbox("all")
+                )
+            )
+
+        panel.bind(
+            "<Configure>",
+            update_scroll_region,
+        )
+
+        def update_content_width(event):
+
+            sidebar_canvas.itemconfigure(
+                sidebar_window,
+                width=event.width,
+            )
+
+        sidebar_canvas.bind(
+            "<Configure>",
+            update_content_width,
+        )
+
+        # ====================================================
+        # MOUSE / TRACKPAD SCROLL
+        # ====================================================
+
+        def mouse_scroll(event):
+
+            if event.delta == 0:
+                return
+
+            direction = (
+                -1
+                if event.delta > 0
+                else 1
+            )
+
+            sidebar_canvas.yview_scroll(
+                direction,
+                "units",
+            )
+
+        def linux_scroll_up(event):
+
+            sidebar_canvas.yview_scroll(
+                -1,
+                "units",
+            )
+
+        def linux_scroll_down(event):
+
+            sidebar_canvas.yview_scroll(
+                1,
+                "units",
+            )
+
+        def enable_scrolling(event=None):
+
+            sidebar_canvas.bind_all(
+                "<MouseWheel>",
+                mouse_scroll,
+            )
+
+            sidebar_canvas.bind_all(
+                "<Button-4>",
+                linux_scroll_up,
+            )
+
+            sidebar_canvas.bind_all(
+                "<Button-5>",
+                linux_scroll_down,
+            )
+
+        def disable_scrolling(event=None):
+
+            sidebar_canvas.unbind_all(
+                "<MouseWheel>"
+            )
+
+            sidebar_canvas.unbind_all(
+                "<Button-4>"
+            )
+
+            sidebar_canvas.unbind_all(
+                "<Button-5>"
+            )
+
+        outer_panel.bind(
+            "<Enter>",
+            enable_scrolling,
+        )
+
+        outer_panel.bind(
+            "<Leave>",
+            disable_scrolling,
+        )
+
+        sidebar_canvas.bind(
+            "<Enter>",
+            enable_scrolling,
+        )
+
+        panel.bind(
+            "<Enter>",
+            enable_scrolling,
         )
 
         # ====================================================
@@ -477,34 +774,47 @@ class DigitalTwin:
             text="● STARTING",
             fg=AMBER,
             bg=PANEL,
-            font=("Arial", 15, "bold"),
+            font=("Arial", 14, "bold"),
         )
 
         self.health_label.pack(
-            pady=(4, 10)
+            pady=(10, 7),
         )
+
+        # ====================================================
+        # GATEWAY STATUS
+        # ====================================================
 
         self.gateway_label = tk.Label(
             panel,
+            text=(
+                "ESP32 Gateway  STARTING\n\n"
+                "FRONT   STARTING\n"
+                "CABIN   STARTING\n"
+                "REAR    STARTING"
+            ),
             fg=TEXT,
             bg=PANEL,
             justify="left",
-            font=("Arial", 10),
+            anchor="w",
+            font=("Courier", 9),
         )
 
         self.gateway_label.pack(
-            anchor="w",
+            fill="x",
+            padx=15,
             pady=4,
         )
 
         # ====================================================
-        # SELF-HEALING
+        # SELF HEALING
         # ====================================================
 
         ttk.Separator(
             panel
         ).pack(
             fill="x",
+            padx=12,
             pady=8,
         )
 
@@ -513,25 +823,30 @@ class DigitalTwin:
             text="SELF-HEALING / RECOVERY",
             fg=BLUE,
             bg=PANEL,
-            font=("Arial", 10, "bold"),
-        ).pack(anchor="w")
+            font=("Arial", 9, "bold"),
+        ).pack(
+            anchor="w",
+            padx=15,
+        )
 
         self.recovery_label = tk.Label(
             panel,
             text=(
-                "FRONT  IDLE\n"
-                "CABIN  IDLE\n"
-                "REAR   IDLE"
+                "FRONT  IDLE       Attempts: 0\n"
+                "CABIN  IDLE       Attempts: 0\n"
+                "REAR   IDLE       Attempts: 0"
             ),
             fg=TEXT,
             bg=PANEL,
             justify="left",
-            font=("Courier", 9),
+            anchor="w",
+            font=("Courier", 8),
         )
 
         self.recovery_label.pack(
-            anchor="w",
-            pady=(5, 6),
+            fill="x",
+            padx=15,
+            pady=(5, 8),
         )
 
         # ====================================================
@@ -542,6 +857,7 @@ class DigitalTwin:
             panel
         ).pack(
             fill="x",
+            padx=12,
             pady=8,
         )
 
@@ -550,8 +866,12 @@ class DigitalTwin:
             text="CABIN CONTROLS",
             fg=BLUE,
             bg=PANEL,
-            font=("Arial", 10, "bold"),
-        ).pack(anchor="w")
+            font=("Arial", 9, "bold"),
+        ).pack(
+            anchor="w",
+            padx=15,
+            pady=(0, 5),
+        )
 
         ttk.Button(
             panel,
@@ -559,7 +879,8 @@ class DigitalTwin:
             command=self.toggle_doors,
         ).pack(
             fill="x",
-            pady=2,
+            padx=15,
+            pady=3,
         )
 
         ttk.Button(
@@ -568,7 +889,8 @@ class DigitalTwin:
             command=self.toggle_seatbelts,
         ).pack(
             fill="x",
-            pady=2,
+            padx=15,
+            pady=3,
         )
 
         # ====================================================
@@ -579,6 +901,7 @@ class DigitalTwin:
             panel
         ).pack(
             fill="x",
+            padx=12,
             pady=8,
         )
 
@@ -587,18 +910,36 @@ class DigitalTwin:
             text="FAULT INJECTION",
             fg=AMBER,
             bg=PANEL,
-            font=("Arial", 10, "bold"),
-        ).pack(anchor="w")
+            font=("Arial", 9, "bold"),
+        ).pack(
+            anchor="w",
+            padx=15,
+            pady=(0, 5),
+        )
 
         for zone in ZONES:
 
-            ttk.Button(
+            control = tk.BooleanVar(
+                value=True
+            )
+
+            self.ecu_controls[
+                zone
+            ] = control
+
+            ttk.Checkbutton(
                 panel,
-                text=f"Toggle {zone} ECU",
-                command=lambda selected=zone:
-                self.toggle_ecu(selected),
+                text=(
+                    f"{zone.title()} ECU online"
+                ),
+                variable=control,
+                command=(
+                    lambda selected=zone:
+                    self.toggle_ecu(selected)
+                ),
             ).pack(
                 fill="x",
+                padx=15,
                 pady=2,
             )
 
@@ -608,7 +949,8 @@ class DigitalTwin:
             command=self.toggle_gateway,
         ).pack(
             fill="x",
-            pady=2,
+            padx=15,
+            pady=3,
         )
 
         ttk.Button(
@@ -617,17 +959,19 @@ class DigitalTwin:
             command=self.restore_network,
         ).pack(
             fill="x",
-            pady=(6, 2),
+            padx=15,
+            pady=3,
         )
 
         # ====================================================
-        # ML PREDICTIVE MAINTENANCE CONTROLS
+        # ML CONDITION SIMULATION
         # ====================================================
 
         ttk.Separator(
             panel
         ).pack(
             fill="x",
+            padx=12,
             pady=8,
         )
 
@@ -636,8 +980,12 @@ class DigitalTwin:
             text="ML CONDITION SIMULATION",
             fg=BLUE,
             bg=PANEL,
-            font=("Arial", 10, "bold"),
-        ).pack(anchor="w")
+            font=("Arial", 9, "bold"),
+        ).pack(
+            anchor="w",
+            padx=15,
+            pady=(0, 5),
+        )
 
         ttk.Button(
             panel,
@@ -645,7 +993,8 @@ class DigitalTwin:
             command=self.simulate_degradation,
         ).pack(
             fill="x",
-            pady=2,
+            padx=15,
+            pady=3,
         )
 
         ttk.Button(
@@ -654,7 +1003,8 @@ class DigitalTwin:
             command=self.reset_condition,
         ).pack(
             fill="x",
-            pady=2,
+            padx=15,
+            pady=3,
         )
 
         ttk.Button(
@@ -663,12 +1013,190 @@ class DigitalTwin:
             command=self.run_ml_prediction,
         ).pack(
             fill="x",
-            pady=2,
+            padx=15,
+            pady=3,
         )
 
+        # ====================================================
+        # OTA FIRMWARE UPDATE
+        # ====================================================
+
+        ttk.Separator(
+            panel
+        ).pack(
+            fill="x",
+            padx=12,
+            pady=10,
+        )
+
+        tk.Label(
+            panel,
+            text="OTA FIRMWARE UPDATE",
+            fg=BLUE,
+            bg=PANEL,
+            font=("Arial", 9, "bold"),
+        ).pack(
+            anchor="w",
+            padx=15,
+            pady=(0, 7),
+        )
+
+        tk.Label(
+            panel,
+            text="Target Zonal ECU",
+            fg=TEXT,
+            bg=PANEL,
+            font=("Arial", 9),
+        ).pack(
+            anchor="w",
+            padx=15,
+        )
+
+        self.ota_zone_box = ttk.Combobox(
+            panel,
+            textvariable=self.ota_target,
+            values=ZONES,
+            state="readonly",
+        )
+
+        self.ota_zone_box.pack(
+            fill="x",
+            padx=15,
+            pady=(2, 7),
+        )
+
+        self.ota_zone_box.bind(
+            "<<ComboboxSelected>>",
+            self._ota_target_changed,
+        )
+
+        self.ota_current_version_label = (
+            tk.Label(
+                panel,
+                text=(
+                    "Current Firmware: "
+                    "v1.0.0"
+                ),
+                fg=TEXT,
+                bg=PANEL,
+                font=(
+                    "Courier",
+                    9,
+                    "bold",
+                ),
+            )
+        )
+
+        self.ota_current_version_label.pack(
+            anchor="w",
+            padx=15,
+            pady=3,
+        )
+
+        tk.Label(
+            panel,
+            text="New Firmware Version",
+            fg=TEXT,
+            bg=PANEL,
+            font=("Arial", 9),
+        ).pack(
+            anchor="w",
+            padx=15,
+            pady=(6, 0),
+        )
+
+        self.ota_version_entry = (
+            ttk.Entry(
+                panel,
+                textvariable=(
+                    self.ota_new_version
+                ),
+            )
+        )
+
+        self.ota_version_entry.pack(
+            fill="x",
+            padx=15,
+            pady=(2, 7),
+        )
+
+        self.ota_update_button = (
+            ttk.Button(
+                panel,
+                text="Start OTA Update",
+                command=(
+                    self.start_ota_update
+                ),
+            )
+        )
+
+        self.ota_update_button.pack(
+            fill="x",
+            padx=15,
+            pady=5,
+        )
+
+        self.ota_progress_bar = (
+            ttk.Progressbar(
+                panel,
+                variable=self.ota_progress,
+                maximum=100,
+                mode="determinate",
+            )
+        )
+
+        self.ota_progress_bar.pack(
+            fill="x",
+            padx=15,
+            pady=(8, 3),
+        )
+
+        self.ota_progress_label = (
+            tk.Label(
+                panel,
+                text="Progress: 0%",
+                fg=TEXT,
+                bg=PANEL,
+                font=("Courier", 9),
+            )
+        )
+
+        self.ota_progress_label.pack(
+            anchor="w",
+            padx=15,
+        )
+
+        self.ota_status_label = (
+            tk.Label(
+                panel,
+                text="Status: IDLE",
+                fg=TEXT,
+                bg=PANEL,
+                justify="left",
+                anchor="w",
+                font=(
+                    "Courier",
+                    9,
+                    "bold",
+                ),
+            )
+        )
+
+        self.ota_status_label.pack(
+            fill="x",
+            padx=15,
+            pady=(4, 15),
+        )
+
+        # Extra bottom spacing
+        tk.Frame(
+            panel,
+            bg=PANEL,
+            height=25,
+        ).pack()
 
     # ========================================================
-    # BOTTOM PANEL
+    # BOTTOM PANELS
     # ========================================================
 
     def _build_bottom_panel(self) -> None:
@@ -676,13 +1204,17 @@ class DigitalTwin:
         panel = tk.Frame(
             self.root,
             bg=BG,
+            height=300,
         )
 
         panel.pack(
             fill="x",
+            expand=False,
             padx=18,
-            pady=(0, 15),
+            pady=(5, 15),
         )
+
+        panel.pack_propagate(False)
 
         # ====================================================
         # TELEMETRY
@@ -695,7 +1227,7 @@ class DigitalTwin:
             bg=PANEL,
             font=("Arial", 11, "bold"),
             padx=12,
-            pady=8,
+            pady=10,
         )
 
         telemetry_panel.pack(
@@ -707,11 +1239,14 @@ class DigitalTwin:
 
         self.telemetry_label = tk.Label(
             telemetry_panel,
+            text=(
+                "Waiting for vehicle telemetry..."
+            ),
             fg=TEXT,
             bg=PANEL,
             justify="left",
-            anchor="w",
-            font=("Courier", 9),
+            anchor="nw",
+            font=("Courier", 10, "bold"),
         )
 
         self.telemetry_label.pack(
@@ -730,7 +1265,7 @@ class DigitalTwin:
             bg=PANEL,
             font=("Arial", 11, "bold"),
             padx=12,
-            pady=8,
+            pady=10,
         )
 
         diagnostic_panel.pack(
@@ -742,12 +1277,15 @@ class DigitalTwin:
 
         self.diagnostic_label = tk.Label(
             diagnostic_panel,
+            text=(
+                "Starting diagnostic system..."
+            ),
             fg=GREEN,
             bg=PANEL,
             justify="left",
-            anchor="w",
-            font=("Courier", 9),
-            wraplength=350,
+            anchor="nw",
+            font=("Courier", 10, "bold"),
+            wraplength=380,
         )
 
         self.diagnostic_label.pack(
@@ -756,7 +1294,7 @@ class DigitalTwin:
         )
 
         # ====================================================
-        # ML PREDICTIVE MAINTENANCE
+        # ML
         # ====================================================
 
         ml_panel = tk.LabelFrame(
@@ -766,11 +1304,11 @@ class DigitalTwin:
             bg=PANEL,
             font=("Arial", 11, "bold"),
             padx=12,
-            pady=8,
+            pady=10,
         )
 
         ml_panel.pack(
-            side="right",
+            side="left",
             fill="both",
             expand=True,
             padx=(5, 0),
@@ -778,12 +1316,16 @@ class DigitalTwin:
 
         self.ml_label = tk.Label(
             ml_panel,
+            text=(
+                "Initializing ML predictive "
+                "maintenance..."
+            ),
             fg=GREEN,
             bg=PANEL,
             justify="left",
-            anchor="w",
-            font=("Courier", 9),
-            wraplength=370,
+            anchor="nw",
+            font=("Courier", 10, "bold"),
+            wraplength=380,
         )
 
         self.ml_label.pack(
@@ -791,9 +1333,8 @@ class DigitalTwin:
             expand=True,
         )
 
-
     # ========================================================
-    # ECU FAULT INJECTION
+    # ECU FAULT
     # ========================================================
 
     def toggle_ecu(
@@ -802,19 +1343,62 @@ class DigitalTwin:
     ) -> None:
 
         if self.hardware_mode:
+
+            self.ecu_controls[
+                zone
+            ].set(True)
+
             return
 
         ecu = self.ecus[zone]
 
-        ecu.online = not ecu.online
+        requested_online = (
+            self.ecu_controls[
+                zone
+            ].get()
+        )
 
-        if ecu.online:
+        ecu.online = requested_online
 
-            self.recovery_requested[zone] = False
+        if requested_online:
 
+            self.manual_faults.discard(
+                zone
+            )
+
+            self.recovery_requested[
+                zone
+            ] = False
+
+            state = self.cvc.zones[
+                zone
+            ]
+
+            state.recovery_status = "IDLE"
+
+        else:
+
+            self.manual_faults.add(
+                zone
+            )
+
+            state = self.cvc.zones[
+                zone
+            ]
+
+            state.status = "OFFLINE"
+            state.last_heartbeat = None
+
+            state.recovery_status = (
+                "MANUAL OFFLINE"
+            )
+
+            self.recovery_requested[
+                zone
+            ] = False
 
     # ========================================================
-    # GATEWAY FAULT INJECTION
+    # GATEWAY FAULT
     # ========================================================
 
     def toggle_gateway(self) -> None:
@@ -825,9 +1409,9 @@ class DigitalTwin:
         ):
 
             self.gateway.transport.connected = (
-                not self.gateway.transport.connected
+                not
+                self.gateway.transport.connected
             )
-
 
     # ========================================================
     # RESTORE NETWORK
@@ -849,16 +1433,27 @@ class DigitalTwin:
 
             ecu.online = True
 
-            self.recovery_requested[zone] = False
+            self.manual_faults.discard(
+                zone
+            )
 
-            state = self.cvc.zones[zone]
+            self.ecu_controls[
+                zone
+            ].set(True)
+
+            self.recovery_requested[
+                zone
+            ] = False
+
+            state = self.cvc.zones[
+                zone
+            ]
 
             state.recovery_status = "IDLE"
             state.recovery_attempts = 0
 
-
     # ========================================================
-    # DOOR CONTROL
+    # DOORS
     # ========================================================
 
     def toggle_doors(self) -> None:
@@ -866,31 +1461,35 @@ class DigitalTwin:
         if self.hardware_mode:
             return
 
-        cabin = self.ecus["CABIN"].telemetry(
+        cabin = self.ecus[
+            "CABIN"
+        ].telemetry(
             self.elapsed
         )
 
         if cabin is None:
             return
 
-        doors = cabin.payload["doors"]
+        doors = cabin.payload[
+            "doors"
+        ]
 
         new_state = (
             "OPEN"
             if all(
                 state == "CLOSED"
-                for state in doors.values()
+                for state
+                in doors.values()
             )
             else "CLOSED"
         )
 
-        self.ecus["CABIN"].door_state = (
-            new_state
-        )
-
+        self.ecus[
+            "CABIN"
+        ].door_state = new_state
 
     # ========================================================
-    # SEAT BELT CONTROL
+    # SEAT BELTS
     # ========================================================
 
     def toggle_seatbelts(self) -> None:
@@ -898,31 +1497,35 @@ class DigitalTwin:
         if self.hardware_mode:
             return
 
-        cabin = self.ecus["CABIN"].telemetry(
+        cabin = self.ecus[
+            "CABIN"
+        ].telemetry(
             self.elapsed
         )
 
         if cabin is None:
             return
 
-        belts = cabin.payload["seatbelts"]
+        belts = cabin.payload[
+            "seatbelts"
+        ]
 
         new_state = (
             "WORN"
             if all(
                 state == "NOT WORN"
-                for state in belts.values()
+                for state
+                in belts.values()
             )
             else "NOT WORN"
         )
 
-        self.ecus["CABIN"].belt_state = (
-            new_state
-        )
-
+        self.ecus[
+            "CABIN"
+        ].belt_state = new_state
 
     # ========================================================
-    # ML DEGRADATION SIMULATION
+    # ML DEGRADATION
     # ========================================================
 
     def simulate_degradation(self) -> None:
@@ -931,10 +1534,6 @@ class DigitalTwin:
             return
 
         self.degradation_level += 1
-
-        # ----------------------------------------------------
-        # LEVEL 1 - MILD DEGRADATION
-        # ----------------------------------------------------
 
         if self.degradation_level == 1:
 
@@ -947,10 +1546,6 @@ class DigitalTwin:
                 communication_health=88.0,
             )
 
-        # ----------------------------------------------------
-        # LEVEL 2 - WARNING CONDITION
-        # ----------------------------------------------------
-
         elif self.degradation_level == 2:
 
             self.condition_data = ConditionData(
@@ -961,10 +1556,6 @@ class DigitalTwin:
                 rpm=4200,
                 communication_health=78.0,
             )
-
-        # ----------------------------------------------------
-        # LEVEL 3+ - CRITICAL CONDITION
-        # ----------------------------------------------------
 
         else:
 
@@ -981,9 +1572,8 @@ class DigitalTwin:
 
         self.run_ml_prediction()
 
-
     # ========================================================
-    # RESET ML CONDITION
+    # RESET CONDITION
     # ========================================================
 
     def reset_condition(self) -> None:
@@ -1001,9 +1591,8 @@ class DigitalTwin:
 
         self.run_ml_prediction()
 
-
     # ========================================================
-    # RUN ML PREDICTION
+    # ML PREDICTION
     # ========================================================
 
     def run_ml_prediction(self) -> None:
@@ -1016,9 +1605,435 @@ class DigitalTwin:
 
         self._render_ml()
 
+    # ========================================================
+    # OTA TARGET CHANGE
+    # ========================================================
+
+    def _ota_target_changed(
+        self,
+        event=None,
+    ) -> None:
+
+        zone = self.ota_target.get()
+
+        version = (
+            self.ota_manager.get_version(
+                zone
+            )
+        )
+
+        self.ota_current_version_label.config(
+            text=(
+                f"Current Firmware: "
+                f"{version}"
+            )
+        )
+
+        self.ota_progress.set(0)
+
+        self.ota_progress_label.config(
+            text="Progress: 0%"
+        )
+
+        self.ota_status_label.config(
+            text="Status: IDLE",
+            fg=TEXT,
+        )
 
     # ========================================================
-    # AUTONOMOUS SELF-HEALING
+    # START OTA
+    # ========================================================
+
+    def start_ota_update(self) -> None:
+
+        if self.ota_updating:
+            return
+
+        zone = self.ota_target.get()
+
+        new_version = (
+            self.ota_new_version.get().strip()
+        )
+
+        if not new_version:
+
+            self.ota_status_label.config(
+                text=(
+                    "Status: INVALID VERSION"
+                ),
+                fg=RED,
+            )
+
+            return
+
+        if (
+            self.cvc.zones[
+                zone
+            ].status != "ONLINE"
+        ):
+
+            self.ota_status_label.config(
+                text=(
+                    "Status: TARGET ECU OFFLINE"
+                ),
+                fg=RED,
+            )
+
+            return
+
+        if not self.gateway.connected:
+
+            self.ota_status_label.config(
+                text=(
+                    "Status: GATEWAY DISCONNECTED"
+                ),
+                fg=RED,
+            )
+
+            return
+
+        current_version = (
+            self.ota_manager.get_version(
+                zone
+            )
+        )
+
+        if current_version == new_version:
+
+            self.ota_progress.set(100)
+
+            self.ota_progress_label.config(
+                text="Progress: 100%"
+            )
+
+            self.ota_status_label.config(
+                text="Status: UP TO DATE",
+                fg=GREEN,
+            )
+
+            return
+
+        self.ota_updating = True
+
+        self.ota_update_button.config(
+            state="disabled"
+        )
+
+        self.ota_zone_box.config(
+            state="disabled"
+        )
+
+        self.ota_version_entry.config(
+            state="disabled"
+        )
+
+        self.ota_progress.set(0)
+
+        self.ota_progress_label.config(
+            text="Progress: 0%"
+        )
+
+        self.ota_status_label.config(
+            text="Status: PREPARING UPDATE",
+            fg=AMBER,
+        )
+
+        self.root.after(
+            400,
+            lambda: self._ota_download(
+                zone,
+                new_version,
+                0,
+            ),
+        )
+
+    # ========================================================
+    # OTA DOWNLOAD
+    # ========================================================
+
+    def _ota_download(
+        self,
+        zone: str,
+        new_version: str,
+        progress: int,
+    ) -> None:
+
+        if not self.gateway.connected:
+
+            self._ota_failed(
+                "GATEWAY CONNECTION LOST"
+            )
+
+            return
+
+        if (
+            self.cvc.zones[
+                zone
+            ].status != "ONLINE"
+        ):
+
+            self._ota_failed(
+                f"{zone} ECU OFFLINE"
+            )
+
+            return
+
+        self.ota_status_label.config(
+            text=(
+                f"Status: DOWNLOADING TO "
+                f"{zone}"
+            ),
+            fg=AMBER,
+        )
+
+        self.ota_progress.set(
+            progress
+        )
+
+        self.ota_progress_label.config(
+            text=(
+                f"Progress: {progress}%"
+            )
+        )
+
+        if progress < 60:
+
+            self.root.after(
+                250,
+                lambda: self._ota_download(
+                    zone,
+                    new_version,
+                    progress + 10,
+                ),
+            )
+
+        else:
+
+            self.root.after(
+                400,
+                lambda: self._ota_verify(
+                    zone,
+                    new_version,
+                ),
+            )
+
+    # ========================================================
+    # OTA VERIFY
+    # ========================================================
+
+    def _ota_verify(
+        self,
+        zone: str,
+        new_version: str,
+    ) -> None:
+
+        if not self.gateway.connected:
+
+            self._ota_failed(
+                "GATEWAY CONNECTION LOST"
+            )
+
+            return
+
+        self.ota_status_label.config(
+            text="Status: VERIFYING FIRMWARE",
+            fg=AMBER,
+        )
+
+        self.ota_progress.set(70)
+
+        self.ota_progress_label.config(
+            text="Progress: 70%"
+        )
+
+        self.root.after(
+            600,
+            lambda: self._ota_install(
+                zone,
+                new_version,
+            ),
+        )
+
+    # ========================================================
+    # OTA INSTALL
+    # ========================================================
+
+    def _ota_install(
+        self,
+        zone: str,
+        new_version: str,
+    ) -> None:
+
+        if not self.gateway.connected:
+
+            self._ota_failed(
+                "GATEWAY CONNECTION LOST"
+            )
+
+            return
+
+        self.ota_status_label.config(
+            text="Status: INSTALLING FIRMWARE",
+            fg=AMBER,
+        )
+
+        self.ota_progress.set(85)
+
+        self.ota_progress_label.config(
+            text="Progress: 85%"
+        )
+
+        self.root.after(
+            600,
+            lambda: self._ota_restart(
+                zone,
+                new_version,
+            ),
+        )
+
+    # ========================================================
+    # OTA RESTART
+    # ========================================================
+
+    def _ota_restart(
+        self,
+        zone: str,
+        new_version: str,
+    ) -> None:
+
+        self.ota_status_label.config(
+            text=(
+                f"Status: RESTARTING "
+                f"{zone} ECU"
+            ),
+            fg=AMBER,
+        )
+
+        self.ota_progress.set(95)
+
+        self.ota_progress_label.config(
+            text="Progress: 95%"
+        )
+
+        # Simulated restart only.
+        if not self.hardware_mode:
+
+            self.ecus[
+                zone
+            ].online = False
+
+        self.root.after(
+            700,
+            lambda: self._ota_complete(
+                zone,
+                new_version,
+            ),
+        )
+
+    # ========================================================
+    # OTA COMPLETE
+    # ========================================================
+
+    def _ota_complete(
+        self,
+        zone: str,
+        new_version: str,
+    ) -> None:
+
+        if not self.gateway.connected:
+
+            self._ota_failed(
+                "GATEWAY CONNECTION LOST"
+            )
+
+            return
+
+        if not self.hardware_mode:
+
+            self.ecus[
+                zone
+            ].online = True
+
+        self.ota_manager.firmware_versions[
+            zone
+        ] = new_version
+
+        self.ota_manager.update_status[
+            zone
+        ] = "COMPLETED"
+
+        self.ota_manager.progress[
+            zone
+        ] = 100
+
+        self.ota_progress.set(100)
+
+        self.ota_progress_label.config(
+            text="Progress: 100%"
+        )
+
+        self.ota_current_version_label.config(
+            text=(
+                f"Current Firmware: "
+                f"{new_version}"
+            )
+        )
+
+        self.ota_status_label.config(
+            text=(
+                "Status: COMPLETED\n"
+                f"{zone} ECU → {new_version}"
+            ),
+            fg=GREEN,
+        )
+
+        self.ota_updating = False
+
+        self.ota_update_button.config(
+            state="normal"
+        )
+
+        self.ota_zone_box.config(
+            state="readonly"
+        )
+
+        self.ota_version_entry.config(
+            state="normal"
+        )
+
+    # ========================================================
+    # OTA FAILED
+    # ========================================================
+
+    def _ota_failed(
+        self,
+        reason: str,
+    ) -> None:
+
+        self.ota_updating = False
+
+        self.ota_status_label.config(
+            text=(
+                "Status: FAILED\n"
+                f"{reason}"
+            ),
+            fg=RED,
+        )
+
+        self.ota_update_button.config(
+            state="normal"
+        )
+
+        self.ota_zone_box.config(
+            state="readonly"
+        )
+
+        self.ota_version_entry.config(
+            state="normal"
+        )
+
+    # ========================================================
+    # AUTOMATIC SELF HEALING
     # ========================================================
 
     def _automatic_recovery(self) -> None:
@@ -1031,12 +2046,19 @@ class DigitalTwin:
 
         for zone in ZONES:
 
-            state = self.cvc.zones[zone]
+            if zone in self.manual_faults:
+                continue
 
-            # CVC confirmed loss of heartbeat
+            state = self.cvc.zones[
+                zone
+            ]
+
             if (
                 state.status == "OFFLINE"
-                and not self.recovery_requested[zone]
+                and not
+                self.recovery_requested[
+                    zone
+                ]
             ):
 
                 self.cvc.request_recovery(
@@ -1057,10 +2079,12 @@ class DigitalTwin:
                     zone
                 ] = True
 
-            # Recovery verified by heartbeat
             if (
-                self.recovery_requested[zone]
-                and state.recovery_status
+                self.recovery_requested[
+                    zone
+                ]
+                and
+                state.recovery_status
                 == "RECOVERED"
             ):
 
@@ -1068,29 +2092,30 @@ class DigitalTwin:
                     zone
                 ] = False
 
-
     # ========================================================
-    # MAIN DIGITAL TWIN LOOP
+    # MAIN LOOP
     # ========================================================
 
     def tick(self) -> None:
 
         try:
 
-            # =================================================
-            # SIMULATION MODE
-            # =================================================
-
             if not self.hardware_mode:
 
-                for ecu in self.ecus.values():
+                for ecu in (
+                    self.ecus.values()
+                ):
 
-                    heartbeat = ecu.heartbeat(
-                        self.elapsed
+                    heartbeat = (
+                        ecu.heartbeat(
+                            self.elapsed
+                        )
                     )
 
-                    telemetry = ecu.telemetry(
-                        self.elapsed
+                    telemetry = (
+                        ecu.telemetry(
+                            self.elapsed
+                        )
                     )
 
                     for frame in (
@@ -1100,7 +2125,8 @@ class DigitalTwin:
 
                         if (
                             frame
-                            and self.gateway.connected
+                            and
+                            self.gateway.connected
                         ):
 
                             self.gateway.send(
@@ -1113,50 +2139,57 @@ class DigitalTwin:
 
                 self._automatic_recovery()
 
-            # =================================================
-            # HARDWARE MODE
-            # =================================================
-
             else:
 
                 self.cvc.poll()
 
             # =================================================
-            # UPDATE COMMUNICATION HEALTH FOR ML
+            # NETWORK HEALTH
             # =================================================
 
             online_count = sum(
-                self.cvc.zones[zone].status
-                == "ONLINE"
+                self.cvc.zones[
+                    zone
+                ].status == "ONLINE"
                 for zone in ZONES
             )
 
             network_health = (
-                online_count / len(ZONES)
+                online_count
+                / len(ZONES)
             ) * 100.0
 
             if not self.gateway.connected:
+
                 network_health = 0.0
 
-            # Preserve degradation simulation if it is worse
-            # than the current network value.
             communication_health = min(
                 self.condition_data.communication_health,
                 network_health,
             )
 
-            self.condition_data = ConditionData(
-                voltage=self.condition_data.voltage,
-                current=self.condition_data.current,
-                temperature=self.condition_data.temperature,
-                vibration=self.condition_data.vibration,
-                rpm=self.condition_data.rpm,
-                communication_health=communication_health,
+            self.condition_data = (
+                ConditionData(
+                    voltage=(
+                        self.condition_data.voltage
+                    ),
+                    current=(
+                        self.condition_data.current
+                    ),
+                    temperature=(
+                        self.condition_data.temperature
+                    ),
+                    vibration=(
+                        self.condition_data.vibration
+                    ),
+                    rpm=(
+                        self.condition_data.rpm
+                    ),
+                    communication_health=(
+                        communication_health
+                    ),
+                )
             )
-
-            # =================================================
-            # LIVE ML PREDICTION
-            # =================================================
 
             self.ml_result = (
                 self.predictive_system.predict(
@@ -1171,10 +2204,6 @@ class DigitalTwin:
             self.logger.log(
                 self.cvc
             )
-
-            # =================================================
-            # RENDER DIGITAL TWIN
-            # =================================================
 
             self._render()
 
@@ -1200,9 +2229,8 @@ class DigitalTwin:
                 self.tick,
             )
 
-
     # ========================================================
-    # RENDER COMPLETE DIGITAL TWIN
+    # RENDER
     # ========================================================
 
     def _render(self) -> None:
@@ -1216,12 +2244,13 @@ class DigitalTwin:
             online = (
                 self.cvc.zones[
                     zone
-                ].status
-                == "ONLINE"
+                ].status == "ONLINE"
             )
 
             self.canvas.itemconfigure(
-                self.zone_items[zone],
+                self.zone_items[
+                    zone
+                ],
                 fill=(
                     "#244936"
                     if online
@@ -1235,7 +2264,7 @@ class DigitalTwin:
             )
 
         # ====================================================
-        # NETWORK HEALTH
+        # NETWORK
         # ====================================================
 
         network_healthy = (
@@ -1245,7 +2274,8 @@ class DigitalTwin:
 
         self.health_label.config(
             text=(
-                f"● {self.cvc.network_status}"
+                f"● "
+                f"{self.cvc.network_status}"
             ),
             fg=(
                 GREEN
@@ -1253,10 +2283,6 @@ class DigitalTwin:
                 else RED
             ),
         )
-
-        # ====================================================
-        # GATEWAY + ECU STATUS
-        # ====================================================
 
         status = "\n".join(
             f"{zone:<6} "
@@ -1268,31 +2294,43 @@ class DigitalTwin:
             text=(
                 f"ESP32 Gateway  "
                 f"{self.cvc.gateway_status}"
-                f"\n\n{status}"
+                f"\n\n"
+                f"{status}"
             )
         )
+
+        for zone in ZONES:
+
+            self.ecu_controls[
+                zone
+            ].set(
+                (
+                    zone not in
+                    self.manual_faults
+                )
+                if not self.hardware_mode
+                else (
+                    self.cvc.zones[
+                        zone
+                    ].status == "ONLINE"
+                )
+            )
 
         # ====================================================
         # TELEMETRY
         # ====================================================
 
-        front = (
-            self.cvc.zones[
-                "FRONT"
-            ].telemetry
-        )
+        front = self.cvc.zones[
+            "FRONT"
+        ].telemetry
 
-        cabin = (
-            self.cvc.zones[
-                "CABIN"
-            ].telemetry
-        )
+        cabin = self.cvc.zones[
+            "CABIN"
+        ].telemetry
 
-        rear = (
-            self.cvc.zones[
-                "REAR"
-            ].telemetry
-        )
+        rear = self.cvc.zones[
+            "REAR"
+        ].telemetry
 
         doors = cabin.get(
             "doors",
@@ -1305,10 +2343,12 @@ class DigitalTwin:
         )
 
         # ====================================================
-        # DOOR VISUALIZATION
+        # DOORS
         # ====================================================
 
-        for key, item in self.door_items.items():
+        for key, item in (
+            self.door_items.items()
+        ):
 
             closed = (
                 doors.get(key)
@@ -1330,10 +2370,12 @@ class DigitalTwin:
             )
 
         # ====================================================
-        # SEAT BELT VISUALIZATION
+        # BELTS
         # ====================================================
 
-        for key, item in self.belt_items.items():
+        for key, item in (
+            self.belt_items.items()
+        ):
 
             worn = (
                 belts.get(key)
@@ -1350,16 +2392,21 @@ class DigitalTwin:
             )
 
         # ====================================================
-        # TELEMETRY DISPLAY
+        # TELEMETRY TEXT
         # ====================================================
 
         self.telemetry_label.config(
             text=(
+                "COLLECTIVE VEHICLE DATA\n"
+                "────────────────────────\n\n"
+
                 f"Speed             "
-                f"{front.get('speed_kph', '--')} km/h\n"
+                f"{front.get('speed_kph', '--')} "
+                f"km/h\n"
 
                 f"Cabin temperature "
-                f"{cabin.get('temperature_c', '--')} °C\n"
+                f"{cabin.get('temperature_c', '--')} "
+                f"°C\n"
 
                 f"Driver            "
                 f"{'DETECTED' if cabin.get('driver_detected') else '--'}\n"
@@ -1381,7 +2428,7 @@ class DigitalTwin:
         )
 
         # ====================================================
-        # SELF-HEALING STATUS
+        # RECOVERY
         # ====================================================
 
         recovery_lines = []
@@ -1441,12 +2488,15 @@ class DigitalTwin:
         # DIAGNOSTICS
         # ====================================================
 
-        faults = self.cvc.diagnostics()
+        faults = (
+            self.cvc.diagnostics()
+        )
 
         if faults:
 
             diagnostic_text = (
-                "ACTIVE DIAGNOSTICS\n\n"
+                "ACTIVE DIAGNOSTICS\n"
+                "──────────────────\n\n"
                 + "\n".join(faults)
             )
 
@@ -1455,8 +2505,11 @@ class DigitalTwin:
         else:
 
             diagnostic_text = (
+                "SYSTEM STATUS\n"
+                "─────────────\n\n"
                 "No active faults\n\n"
-                "Vehicle network operating normally"
+                "Vehicle network "
+                "operating normally"
             )
 
             diagnostic_color = GREEN
@@ -1466,20 +2519,17 @@ class DigitalTwin:
             fg=diagnostic_color,
         )
 
-        # ====================================================
-        # ML DISPLAY
-        # ====================================================
-
         self._render_ml()
 
-
     # ========================================================
-    # RENDER ML PREDICTIVE MAINTENANCE
+    # RENDER ML
     # ========================================================
 
     def _render_ml(self) -> None:
 
-        condition = self.ml_result.condition
+        condition = (
+            self.ml_result.condition
+        )
 
         if condition == "NORMAL":
 
@@ -1498,6 +2548,9 @@ class DigitalTwin:
 
         self.ml_label.config(
             text=(
+                "ML HEALTH SUMMARY\n"
+                "─────────────────\n"
+
                 f"Condition    : "
                 f"{result.condition}\n"
 
@@ -1525,6 +2578,7 @@ class DigitalTwin:
                 f"Comm Health  : "
                 f"{data.communication_health:.0f}%\n\n"
 
+                f"Recommendation:\n"
                 f"{result.recommendation}"
             ),
             fg=condition_color,
