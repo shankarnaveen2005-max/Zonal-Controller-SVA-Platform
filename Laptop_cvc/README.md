@@ -15,7 +15,14 @@ From `Laptop_cvc/`:
 ```bash
 python main.py
 python digital_twin.py
+python -m streamlit run web_digital_twin.py
 ```
+
+The browser-based digital twin is the web view of the same SVA system. It runs
+with Streamlit and opens a dashboard showing the central vehicle computer,
+network health, zonal ECU states, diagnostics, and vehicle architecture. Install
+it once with `python -m pip install streamlit`, then open the app URL that
+Streamlit prints in the terminal.
 
 Simulation is the default, so software development does not require hardware.
 The console simulation runs for five seconds by default and keeps all three
@@ -42,13 +49,14 @@ On Windows, use a port such as `COM5`. Install the serial dependency once with
 The console demo runs the complete simulated three-zone network. Use the
 digital twin fault-injection controls to exercise ECU, gateway, door, and
 seat-belt failures.
-The digital twin opens a spacious top-view car replica with a body outline and
-clearly separated Front, Cabin, and Rear zones. It shows CAN identifiers, four
-door states, four seat-belt states, live ECU health, telemetry, diagnostics,
-and fault-injection controls. Green doors are closed and green belt lines are
-worn; red indicates open or not worn. It
-continuously renders the same
-`CentralVehicleComputer` state used by the console simulation.
+The desktop digital twin opens a spacious top-view car replica with a body
+outline and clearly separated Front, Cabin, and Rear zones. It shows CAN
+identifiers, four door states, four seat-belt states, live ECU health,
+telemetry, diagnostics, and fault-injection controls. Green doors are closed
+and green belt lines are worn; red indicates open or not worn. It continuously
+renders the same `CentralVehicleComputer` state used by the console simulation.
+The web digital twin gives the same system overview in a browser-based Streamlit
+interface with live status cards and a network architecture view.
 
 ## CAN application protocol
 
