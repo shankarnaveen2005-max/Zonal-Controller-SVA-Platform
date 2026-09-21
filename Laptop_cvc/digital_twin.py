@@ -79,8 +79,8 @@ class DigitalTwin:
             "SVA Digital Twin | Central Vehicle Computer"
         )
 
-        self.root.geometry("1400x1000")
-        self.root.minsize(1100, 750)
+        self.root.geometry("1680x1050")
+        self.root.minsize(1300, 800)
         self.root.configure(bg=BG)
 
         # ====================================================
@@ -288,8 +288,16 @@ class DigitalTwin:
         parent: tk.Frame,
     ) -> None:
 
+        model_area = tk.Frame(parent, bg=BG)
+        model_area.pack(
+            side="left",
+            fill="both",
+            expand=True,
+            padx=(0, 10),
+        )
+
         panel = tk.LabelFrame(
-            parent,
+            model_area,
             text="LIVE VEHICLE MODEL",
             fg=TEXT,
             bg=PANEL,
@@ -302,7 +310,6 @@ class DigitalTwin:
             side="left",
             fill="both",
             expand=True,
-            padx=(0, 10),
         )
 
         self.canvas = tk.Canvas(
@@ -467,6 +474,66 @@ class DigitalTwin:
         )
 
         self._draw_car_details()
+        self._build_camera_panel(model_area)
+
+    def _build_camera_panel(self, parent: tk.Frame) -> None:
+        """Reserve a video-sized rear-camera area for future hardware input."""
+        panel = tk.LabelFrame(
+            parent,
+            text="REAR CAMERA",
+            fg=TEXT,
+            bg=PANEL,
+            font=("Arial", 11, "bold"),
+            padx=12,
+            pady=12,
+            width=310,
+        )
+        panel.pack(
+            side="right",
+            fill="y",
+            padx=(12, 0),
+        )
+        panel.pack_propagate(False)
+
+        self.camera_screen = tk.Frame(panel, bg="#030609", height=210)
+        self.camera_screen.pack(fill="x", pady=(4, 12))
+        self.camera_screen.pack_propagate(False)
+        self.camera_title = tk.Label(
+            self.camera_screen,
+            text="NO SIGNAL",
+            fg="#dbe7eb",
+            bg="#030609",
+            font=("Arial", 22, "bold"),
+        )
+        self.camera_title.pack(expand=True)
+        self.camera_message = tk.Label(
+            self.camera_screen,
+            text="Camera Not Connected",
+            fg="#8298a3",
+            bg="#030609",
+            font=("Arial", 10),
+        )
+        self.camera_message.pack(pady=(0, 18))
+
+        self.camera_status_label = tk.Label(
+            panel,
+            text="Status : OFFLINE\nSignal : NO SIGNAL\nLocation: REAR",
+            fg=RED,
+            bg=PANEL,
+            justify="left",
+            anchor="w",
+            font=("Courier", 11, "bold"),
+        )
+        self.camera_status_label.pack(fill="x", pady=4)
+        tk.Label(
+            panel,
+            text="Reserved for ESP32 / rear-camera video stream",
+            fg="#9bb0b8",
+            bg=PANEL,
+            justify="left",
+            wraplength=270,
+            font=("Arial", 9),
+        ).pack(fill="x", pady=(18, 0))
 
     # ========================================================
     # VEHICLE DETAILS
@@ -861,50 +928,6 @@ class DigitalTwin:
             fill="x",
             padx=15,
             pady=(5, 8),
-        )
-
-        # ====================================================
-        # CABIN CONTROLS
-        # ====================================================
-
-        ttk.Separator(
-            panel
-        ).pack(
-            fill="x",
-            padx=12,
-            pady=8,
-        )
-
-        tk.Label(
-            panel,
-            text="CABIN CONTROLS",
-            fg=BLUE,
-            bg=PANEL,
-            font=("Arial", 9, "bold"),
-        ).pack(
-            anchor="w",
-            padx=15,
-            pady=(0, 5),
-        )
-
-        ttk.Button(
-            panel,
-            text="Toggle all doors",
-            command=self.toggle_doors,
-        ).pack(
-            fill="x",
-            padx=15,
-            pady=3,
-        )
-
-        ttk.Button(
-            panel,
-            text="Toggle all seat belts",
-            command=self.toggle_seatbelts,
-        ).pack(
-            fill="x",
-            padx=15,
-            pady=3,
         )
 
         # ====================================================
@@ -1614,6 +1637,34 @@ class DigitalTwin:
         )
 
         self._render_ml()
+
+    def _render_camera(self, rear: dict) -> None:
+        """Render rear-camera metadata in the dedicated camera panel."""
+        status = str(rear.get("camera_status", "OFFLINE")).upper()
+        signal = str(rear.get("camera_signal", "NO SIGNAL")).upper()
+        location = str(rear.get("camera_location", "REAR")).upper()
+        available = rear.get("camera_available", False)
+        ready = status == "ONLINE" and signal not in {"NO SIGNAL", "OFFLINE"}
+
+        if ready or available:
+            title = "CAMERA READY"
+            message = "Waiting for video stream"
+            color = GREEN
+        else:
+            title = "NO SIGNAL"
+            message = "Camera Not Connected"
+            color = RED
+
+        self.camera_title.config(text=title, fg=color)
+        self.camera_message.config(text=message)
+        self.camera_status_label.config(
+            text=(
+                f"Status : {status}\n"
+                f"Signal : {signal}\n"
+                f"Location: {location}"
+            ),
+            fg=color,
+        )
 
     # ========================================================
     # OTA TARGET CHANGE
@@ -2335,6 +2386,8 @@ class DigitalTwin:
             "REAR"
         ].telemetry
 
+        self._render_camera(rear)
+
         doors = cabin.get(
             "doors",
             {},
@@ -2438,8 +2491,7 @@ class DigitalTwin:
                 f"Obstacle Status   : {rear.get('obstacle_status', '--')}\n"
                 f"Brake Status      : {rear.get('brake_status', '--')}\n"
                 f"Rear Light        : {rear.get('rear_light_status', '--')}\n"
-                f"Wheel RPM         : {rear.get('wheel_rpm', '--')}\n"
-                f"Camera Status     : {rear.get('camera_status', '--')}"
+                f"Wheel RPM         : {rear.get('wheel_rpm', '--')}"
             )
         )
 
