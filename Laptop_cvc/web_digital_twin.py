@@ -241,9 +241,17 @@ def _metric_card(label: str, value: str, state: str = "online") -> None:
     )
 
 
+def _faults() -> set[str]:
+    return st.session_state.setdefault("web_faults", set())
+
+
 def _dashboard() -> None:
     user_id = st.session_state["user_id"]
     role = st.session_state["role"]
+    faults = _faults()
+    gateway_fault = "ESP32_GATEWAY" in faults
+    ecu_faults = {"FRONT", "CABIN", "REAR"} & faults
+    network_healthy = not faults
     with st.sidebar:
         st.markdown("### SVA DIGITAL TWIN")
         st.markdown(f"**User:** `{user_id}`")
@@ -262,11 +270,17 @@ def _dashboard() -> None:
     st.subheader("Central Vehicle Computer")
     cvc, can, ecus, clock = st.columns(4)
     with cvc:
-        _metric_card("ESP32 Gateway", "CONNECTED")
+        _metric_card(
+            "ESP32 Gateway",
+            "OFFLINE" if gateway_fault else "CONNECTED",
+            "offline" if gateway_fault else "online",
+        )
     with can:
-        _metric_card("CAN Network", "HEALTHY")
+        _metric_card("CAN Network", "FAULT" if not network_healthy else "HEALTHY",
+                     "offline" if not network_healthy else "online")
     with ecus:
-        _metric_card("Active ECUs", "3 / 3")
+        _metric_card("Active ECUs", f"{3 - len(ecu_faults)} / 3",
+                     "offline" if ecu_faults else "online")
     with clock:
         _metric_card("Session", role)
 
@@ -281,19 +295,25 @@ def _dashboard() -> None:
     st.subheader("Zonal ECU Telemetry")
     front, cabin, rear = st.columns(3)
     with front:
-        st.markdown('<h3 class="online">FRONT ZONAL ECU — ONLINE</h3>', unsafe_allow_html=True)
+        state = "OFFLINE" if "FRONT" in faults else "ONLINE"
+        style = "offline" if state == "OFFLINE" else "online"
+        st.markdown(f'<h3 class="{style}">FRONT ZONAL ECU — {state}</h3>', unsafe_allow_html=True)
         st.caption("CAN Heartbeat 0x101  •  Telemetry 0x102")
         st.write("Speed: **45 km/h**")
         st.write("Steering: **0°**")
         st.write("Obstacle: CLEAR")
     with cabin:
-        st.markdown('<h3 class="online">CABIN ZONAL ECU — ONLINE</h3>', unsafe_allow_html=True)
+        state = "OFFLINE" if "CABIN" in faults else "ONLINE"
+        style = "offline" if state == "OFFLINE" else "online"
+        st.markdown(f'<h3 class="{style}">CABIN ZONAL ECU — {state}</h3>', unsafe_allow_html=True)
         st.caption("CAN Heartbeat 0x201  •  Telemetry 0x202")
         st.write("Temperature: **26 °C**")
         st.write("Driver: DETECTED")
         st.write("Doors: CLOSED  •  Seat belts: WORN")
     with rear:
-        st.markdown('<h3 class="online">REAR ZONAL ECU — ONLINE</h3>', unsafe_allow_html=True)
+        state = "OFFLINE" if "REAR" in faults else "ONLINE"
+        style = "offline" if state == "OFFLINE" else "online"
+        st.markdown(f'<h3 class="{style}">REAR ZONAL ECU — {state}</h3>', unsafe_allow_html=True)
         st.caption("CAN Heartbeat 0x301  •  Telemetry 0x302")
         st.write("Obstacle: CLEAR")
         st.write("Parking Brake: ACTIVE")
@@ -304,9 +324,13 @@ def _dashboard() -> None:
     st.subheader("CVC Engineering Intelligence")
     diag, recovery, ml, ota = st.columns(4)
     with diag:
-        st.info("🔍 Diagnostics\n\nNo active DTCs")
+        if faults:
+            st.error("🔍 Diagnostics\n\n" + "\n".join(f"DTC-{fault}" for fault in sorted(faults)))
+        else:
+            st.info("🔍 Diagnostics\n\nNo active DTCs")
     with recovery:
-        st.info("🔧 Self-Healing\n\nRecovery System Ready")
+        st.warning("🔧 Self-Healing\n\nRecovery required" if faults else
+                   "🔧 Self-Healing\n\nRecovery System Ready")
     with ml:
         st.info("🧠 Predictive Maintenance\n\nCondition: NORMAL\nRisk: LOW")
     with ota:
@@ -347,6 +371,40 @@ def _dashboard() -> None:
             st.success(st.session_state.web_ota_message)
         else:
             st.info("Select a target ECU and firmware version to begin.")
+
+    st.divider()
+    st.subheader("Fault Injection")
+    if role == "VIEWER":
+        st.info("Fault injection requires ENGINEER or ADMIN permission.")
+    else:
+        st.caption("Simulation only — use this to test diagnostics and recovery behavior.")
+        fault_cols = st.columns(4)
+        fault_targets = (
+            ("FRONT", "Front ECU"),
+            ("CABIN", "Cabin ECU"),
+            ("REAR", "Rear ECU"),
+            ("ESP32_GATEWAY", "ESP32 Gateway"),
+        )
+        for column, (fault_id, label) in zip(fault_cols, fault_targets):
+            with column:
+                injected = fault_id in faults
+                if st.button(
+                    f"Clear {label}" if injected else f"Inject {label}",
+                    key=f"fault_{fault_id}",
+                    use_container_width=True,
+                ):
+                    if injected:
+                        faults.discard(fault_id)
+                        action = "FAULT_CLEARED"
+                    else:
+                        faults.add(fault_id)
+                        action = "FAULT_INJECTED"
+                    _audit(action, user_id, fault_id)
+                    st.rerun()
+        if faults and st.button("Clear all faults", use_container_width=True):
+            faults.clear()
+            _audit("ALL_FAULTS_CLEARED", user_id)
+            st.rerun()
 
     if role in {"ADMIN", "ENGINEER"}:
         st.divider()
