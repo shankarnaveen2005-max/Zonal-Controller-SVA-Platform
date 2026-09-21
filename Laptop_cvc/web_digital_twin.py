@@ -172,7 +172,7 @@ def _vehicle_replica(
         return "#244936", "#27c281", "ONLINE"
 
     front_fill, front_stroke, front_state = zone_style("FRONT")
-    cabin_fill, cabin_stroke, cabin_state = zone_style("CABIN")
+    cabin_fill, cabin_stroke, cabin_zone_state = zone_style("CABIN")
     rear_fill, rear_stroke, rear_state = zone_style("REAR")
 
     def state_color(value: str, good: str, bad: str) -> str:
@@ -271,7 +271,7 @@ def _vehicle_replica(
         front_state=front_state,
         cabin_fill=cabin_fill,
         cabin_stroke=cabin_stroke,
-        cabin_state=cabin_state,
+        cabin_state=cabin_zone_state,
         rear_fill=rear_fill,
         rear_stroke=rear_stroke,
         rear_state=rear_state,
