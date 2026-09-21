@@ -49,6 +49,28 @@ audit store with a managed database; ephemeral cloud files can be lost on
 redeploy. Never put `SVA_USERS_JSON`, password hashes, or database credentials
 in Git.
 
+### Live hardware data
+
+The web dashboard polls every two seconds and can subscribe to CVC telemetry
+over MQTT. Configure these deployment secrets when the ESP32/CVC bridge is
+available:
+
+```text
+SVA_MQTT_HOST=broker.example.com
+SVA_MQTT_PORT=8883
+SVA_MQTT_TOPIC=sva/vehicle/state
+SVA_MQTT_USERNAME=web-subscriber
+SVA_MQTT_PASSWORD=...
+SVA_MQTT_TLS=true
+```
+
+The CVC should publish JSON containing any of `front`, `cabin`, `rear`, and
+`camera` sections. The dashboard displays `HARDWARE ONLINE` when messages
+arrive, `STALE DATA` after ten seconds without a message, and uses simulation
+when no MQTT host is configured. Camera telemetry may include a
+`stream_url`; the actual camera video must be provided through a secure
+WebRTC, HLS, or MJPEG endpoint rather than the CAN payload.
+
 This prototype models a zonal-controller software vehicle architecture:
 
 ```text

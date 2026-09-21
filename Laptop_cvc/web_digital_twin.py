@@ -13,12 +13,11 @@ import hmac
 import json
 
 import os
-
+import queue
 import random
-
 import secrets
-
 import sqlite3
+import ssl
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +28,12 @@ from typing import Any
 
 import streamlit as st
 import streamlit.components.v1 as components
+from streamlit_autorefresh import st_autorefresh
+
+try:
+    import paho.mqtt.client as mqtt
+except ImportError:  # pragma: no cover - dependency is installed for deployment
+    mqtt = None
 
 
 
@@ -599,9 +604,17 @@ def _rear_camera_panel(camera: dict[str, Any]) -> str:
     if camera.get("available"):
         signal_text = "LIVE STREAM READY"
         note = "Camera connected"
+        stream_url = str(camera.get("stream_url", ""))
+        stream_markup = (
+            f'<video class="camera-feed" src="{stream_url}" '
+            "autoplay muted controls playsinline></video>"
+            if stream_url
+            else ""
+        )
     else:
         signal_text = camera.get("signal", "NO SIGNAL")
         note = "Camera Not Connected"
+        stream_markup = ""
 
     return dedent("""
 
@@ -617,6 +630,8 @@ def _rear_camera_panel(camera: dict[str, Any]) -> str:
         color: #dbe7eb; }}
       .camera-screen .signal {{ color: #ef6262; font-size: 1.5rem;
         font-weight: 700; }}
+      .camera-feed {{ width: 100%; min-height: 330px; object-fit: cover;
+        border-radius: 8px; background: #030609; }}
       .camera-meta {{ color: #ef6262; font-family: monospace; font-weight: 700;
         white-space: pre-line; margin-top: 14px; }}
     </style>
@@ -625,6 +640,8 @@ def _rear_camera_panel(camera: dict[str, Any]) -> str:
       <div class="sva-muted"><b>REAR CAMERA</b></div>
 
       <div class="camera-screen">
+
+        {stream_markup}
 
         <div class="signal">{signal_text}</div>
 
@@ -648,6 +665,7 @@ def _rear_camera_panel(camera: dict[str, Any]) -> str:
         location=camera.get("location", "REAR"),
         signal_text=signal_text,
         note=note,
+        stream_markup=stream_markup,
     ).strip()
 
 
@@ -733,6 +751,7 @@ def _vehicle_state() -> dict[str, Any]:
             "rear": {"obstacle_distance": 30.0, "obstacle_status": "CLEAR", "parking_brake": "ACTIVE", "rear_light": "OFF", "wheel_rpm": 0},
             "camera": {"available": False, "status": "OFFLINE", "signal": "NO SIGNAL", "location": "REAR"},
             "last_update": datetime.now(timezone.utc).isoformat(),
+            "connection": "SIMULATION",
         },
     )
 
@@ -761,23 +780,115 @@ def _refresh_simulation_state() -> None:
             wheel_rpm=random.randint(0, 1400),
         )
     state["last_update"] = datetime.now(timezone.utc).isoformat()
+    state["connection"] = "SIMULATION"
 
 
-def _apply_hardware_payload(payload: dict[str, Any]) -> None:
-    """Future MQTT/CVC entry point. Merge validated hardware data into shared state."""
-    state = _vehicle_state()
+def _validate_hardware_payload(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    validated: dict[str, Any] = {}
     for section in ("front", "cabin", "rear", "camera"):
         incoming = payload.get(section)
         if isinstance(incoming, dict):
-            state[section].update(incoming)
+            validated[section] = incoming
+    return validated or None
+
+
+def _apply_hardware_payload(payload: dict[str, Any]) -> None:
+    """Merge a validated CVC/MQTT payload into the state consumed by the UI."""
+    state = _vehicle_state()
+    validated = _validate_hardware_payload(payload)
+    if validated is None:
+        return
+    for section, incoming in validated.items():
+        state[section].update(incoming)
     state["source"] = "HARDWARE / MQTT"
+    state["connection"] = "HARDWARE ONLINE"
     state["last_update"] = datetime.now(timezone.utc).isoformat()
+
+
+@st.cache_resource
+def _mqtt_resources() -> tuple[Any, queue.Queue[dict[str, Any]]]:
+    return None, queue.Queue(maxsize=20)
+
+
+def _mqtt_message_callback(_client: Any, _userdata: Any, message: Any) -> None:
+    try:
+        payload = json.loads(message.payload.decode("utf-8"))
+        validated = _validate_hardware_payload(payload)
+        if validated is not None:
+            _, messages = _mqtt_resources()
+            try:
+                messages.put_nowait(validated)
+            except queue.Full:
+                messages.get_nowait()
+                messages.put_nowait(validated)
+    except (UnicodeDecodeError, json.JSONDecodeError, queue.Empty):
+        return
+
+
+def _start_mqtt() -> str:
+    if mqtt is None:
+        return "MQTT DEPENDENCY MISSING"
+    host = _secret("SVA_MQTT_HOST")
+    topic = _secret("SVA_MQTT_TOPIC", "sva/vehicle/state")
+    if not host:
+        return "SIMULATION"
+    client, _ = _mqtt_resources()
+    if client is not None and client.is_connected():
+        return "MQTT CONNECTED"
+    try:
+        port = int(_secret("SVA_MQTT_PORT", "8883"))
+        client_id = _secret("SVA_MQTT_CLIENT_ID", f"sva-web-{secrets.token_hex(4)}")
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+        username = _secret("SVA_MQTT_USERNAME")
+        password = _secret("SVA_MQTT_PASSWORD")
+        if username:
+            client.username_pw_set(username, password)
+        if _secret("SVA_MQTT_TLS", "true").lower() == "true":
+            client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
+        client.on_message = _mqtt_message_callback
+        client.connect(host, port, keepalive=30)
+        client.subscribe(topic, qos=1)
+        client.loop_start()
+        st.session_state["mqtt_client"] = client
+        return "MQTT CONNECTED"
+    except (OSError, ValueError):
+        return "MQTT OFFLINE"
+
+
+def _poll_hardware() -> str:
+    connection = _start_mqtt()
+    client = st.session_state.get("mqtt_client")
+    if client is None:
+        return connection
+    _, messages = _mqtt_resources()
+    received = False
+    while True:
+        try:
+            _apply_hardware_payload(messages.get_nowait())
+            received = True
+        except queue.Empty:
+            break
+    state = _vehicle_state()
+    if received:
+        return "HARDWARE ONLINE"
+    if state["source"] == "HARDWARE / MQTT":
+        try:
+            last_update = datetime.fromisoformat(state["last_update"])
+            if (datetime.now(timezone.utc) - last_update).total_seconds() > 10:
+                state["connection"] = "STALE DATA"
+                return "STALE DATA"
+        except ValueError:
+            return "STALE DATA"
+    return connection
 
 
 
 
 def _dashboard() -> None:
 
+    st_autorefresh(interval=2000, key="sva_live_refresh")
     user_id = st.session_state["user_id"]
 
     role = st.session_state["role"]
@@ -786,6 +897,9 @@ def _dashboard() -> None:
 
     cabin_state = _cabin_state()
 
+    connection = _poll_hardware()
+    if connection == "SIMULATION":
+        _refresh_simulation_state()
     vehicle_state = _vehicle_state()
 
     # Keep cabin visualization tied to the shared state.
@@ -815,6 +929,12 @@ def _dashboard() -> None:
         st.caption("Authenticated session")
 
         st.caption(f"Data source: {vehicle_state['source']}")
+        status_style = "online" if connection in {"SIMULATION", "MQTT CONNECTED", "HARDWARE ONLINE"} else "offline"
+        st.markdown(
+            f'<span class="{status_style}">Live link: {connection}</span>',
+            unsafe_allow_html=True,
+        )
+        st.caption(f"Last update: {vehicle_state['last_update']}")
 
         if st.button("Refresh telemetry", use_container_width=True):
             _refresh_simulation_state()
