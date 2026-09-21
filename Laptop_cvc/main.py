@@ -1,18 +1,57 @@
-"""Console demo for simulation or a physical ESP32 CAN gateway."""
+"""
+Integrated SVA Central Vehicle Computer
+
+Architecture:
+Front Zonal ECU ──┐
+Cabin Zonal ECU ──┼── CAN Bus ── ESP32 Gateway ── Laptop CVC
+Rear Zonal ECU ───┘
+"""
 
 import argparse
+import os
+import sys
 import time
+
+
+# ============================================================
+# PROJECT PATH
+# ============================================================
+
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
+)
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+
+# ============================================================
+# CVC IMPORTS
+# ============================================================
 
 from can_protocol import recovery_frame
 from cvc_platform import CentralVehicleComputer
 from data_logging import DataLogger
+
 from esp32_gateway import (
     ESP32Gateway,
     SerialGatewayTransport,
     SimulatedGatewayTransport,
 )
-from zonal_ecu import ZonalECU
 
+
+# ============================================================
+# DEDICATED ZONAL ECU IMPORTS
+# ============================================================
+
+from Zonal_ECUs.Front_ECU.front_ecu import FrontZonalECU
+from Zonal_ECUs.Cabin_ECU.cabin_ecu import CabinZonalECU
+from Zonal_ECUs.Rear_ECU.rear_ecu import RearZonalECU
+
+
+# ============================================================
+# MAIN APPLICATION
+# ============================================================
 
 def main() -> None:
 
@@ -21,25 +60,28 @@ def main() -> None:
     # ========================================================
 
     parser = argparse.ArgumentParser(
-        description="Run the laptop CVC"
+        description="Run the integrated SVA Laptop CVC"
     )
 
     parser.add_argument(
         "--port",
-        help="ESP32 serial port"
+        help="ESP32 serial port",
     )
 
     parser.add_argument(
         "--baud",
         type=int,
-        default=115200
+        default=115200,
     )
 
     parser.add_argument(
         "--duration",
         type=float,
         default=12.0,
-        help="Simulation run time in seconds; ignored in hardware mode",
+        help=(
+            "Simulation runtime in seconds; "
+            "ignored in hardware mode"
+        ),
     )
 
     args = parser.parse_args()
@@ -49,20 +91,29 @@ def main() -> None:
     # ESP32 GATEWAY
     # ========================================================
 
-    transport = (
-        SerialGatewayTransport(args.port, args.baud)
-        if args.port
-        else SimulatedGatewayTransport()
-    )
+    if args.port:
 
-    gateway = ESP32Gateway(transport)
+        transport = SerialGatewayTransport(
+            args.port,
+            args.baud,
+        )
+
+    else:
+
+        transport = SimulatedGatewayTransport()
+
+    gateway = ESP32Gateway(
+        transport
+    )
 
 
     # ========================================================
     # CENTRAL VEHICLE COMPUTER
     # ========================================================
 
-    cvc = CentralVehicleComputer(gateway)
+    cvc = CentralVehicleComputer(
+        gateway
+    )
 
 
     # ========================================================
@@ -73,55 +124,88 @@ def main() -> None:
 
 
     # ========================================================
-    # SIMULATED STM32 ZONAL ECUs
+    # DEDICATED ZONAL ECUs
     # ========================================================
 
-    ecus = (
-        [
-            ZonalECU("FRONT"),
-            ZonalECU("CABIN"),
-            ZonalECU("REAR"),
+    if not args.port:
+
+        front_ecu = FrontZonalECU()
+        cabin_ecu = CabinZonalECU()
+        rear_ecu = RearZonalECU()
+
+        ecus = [
+            front_ecu,
+            cabin_ecu,
+            rear_ecu,
         ]
-        if not args.port
-        else []
-    )
+
+    else:
+
+        ecus = []
 
 
     # ========================================================
     # STARTUP DISPLAY
     # ========================================================
 
-    print("\n==============================================")
-    print("        THREE-ZONE SVA CVC PLATFORM")
-    print("==============================================")
+    print()
+    print("=" * 65)
+    print("       INTEGRATED THREE-ZONE SVA CVC PLATFORM")
+    print("=" * 65)
 
     print(
-        "STM32 ECUs -> CAN Bus -> ESP32 Gateway "
-        "-> Central Vehicle Computer"
+        "Zonal ECUs -> CAN Bus -> ESP32 Gateway -> Laptop CVC"
     )
 
-    print("Data Logging: ENABLED")
+    print(
+        f"ESP32 Gateway      : {cvc.gateway_status}"
+    )
+
+    print(
+        "Data Logging       : ENABLED"
+    )
 
     if args.port:
-        print("Operating Mode: HARDWARE")
-    else:
-        print("Operating Mode: SIMULATION")
 
-    print("==============================================\n")
+        print(
+            "Operating Mode     : HARDWARE"
+        )
+
+    else:
+
+        print(
+            "Operating Mode     : SIMULATION"
+        )
+
+        print(
+            "Front Zonal ECU    : LOADED"
+        )
+
+        print(
+            "Cabin Zonal ECU    : LOADED"
+        )
+
+        print(
+            "Rear Zonal ECU     : LOADED"
+        )
+
+    print("=" * 65)
+    print()
 
 
     # ========================================================
-    # SIMULATION VARIABLES
+    # SIMULATION CONTROL
     # ========================================================
 
     started = time.monotonic()
 
     fault_injected = False
     recovery_requested = False
+    recovery_completed = False
 
 
     # ========================================================
-    # MAIN CVC LOOP
+    # MAIN LOOP
     # ========================================================
 
     while (
@@ -129,7 +213,10 @@ def main() -> None:
         or time.monotonic() - started < args.duration
     ):
 
-        elapsed = time.monotonic() - started
+        elapsed = (
+            time.monotonic()
+            - started
+        )
 
 
         # ====================================================
@@ -142,44 +229,62 @@ def main() -> None:
             # REAR ECU FAULT INJECTION
             # ------------------------------------------------
 
-            if elapsed >= 3 and not fault_injected:
+            if (
+                elapsed >= 3
+                and not fault_injected
+            ):
 
-                rear_ecu = next(
-                    ecu
-                    for ecu in ecus
-                    if ecu.zone == "REAR"
-                )
-
-                rear_ecu.online = False
+                rear_ecu.inject_fault()
 
                 fault_injected = True
 
+                print()
                 print(
-                    "\n[FAULT INJECTION] "
-                    "Rear Zonal ECU communication stopped.\n"
+                    "[FAULT INJECTION] "
+                    "Rear Zonal ECU communication stopped."
                 )
+                print()
 
 
             # ------------------------------------------------
-            # GENERATE HEARTBEAT + TELEMETRY
+            # ZONAL ECU SENSOR UPDATE + CAN TRANSMISSION
             # ------------------------------------------------
 
             for ecu in ecus:
 
-                heartbeat_frame = ecu.heartbeat(elapsed)
-                telemetry_frame = ecu.telemetry(elapsed)
+                if not ecu.online:
+                    continue
 
-                for frame in (
-                    heartbeat_frame,
-                    telemetry_frame,
-                ):
+                # Update zone-specific simulated sensors
+                ecu.update_sensors()
 
-                    if frame:
-                        gateway.send(frame)
+                # Create heartbeat frame
+                heartbeat_frame = (
+                    ecu.heartbeat()
+                )
+
+                # Create telemetry frame
+                telemetry_frame = (
+                    ecu.telemetry()
+                )
+
+                # Send heartbeat to gateway
+                if heartbeat_frame is not None:
+
+                    gateway.send(
+                        heartbeat_frame
+                    )
+
+                # Send telemetry to gateway
+                if telemetry_frame is not None:
+
+                    gateway.send(
+                        telemetry_frame
+                    )
 
 
         # ====================================================
-        # CVC PROCESSING
+        # CENTRAL VEHICLE COMPUTER PROCESSING
         # ====================================================
 
         cvc.poll()
@@ -189,83 +294,112 @@ def main() -> None:
         # DATA LOGGING
         # ====================================================
 
-        logger.log(cvc)
+        logger.log(
+            cvc
+        )
 
 
         # ====================================================
-        # DISPLAY CURRENT NETWORK STATUS
+        # DISPLAY ZONAL ECU STATUS
         # ====================================================
+
+        zone_status = " | ".join(
+            [
+                f"{zone}: {cvc.zones[zone].status}"
+                for zone in cvc.zones
+            ]
+        )
 
         print(
-            " | ".join(
-                [
-                    f"{zone}: {cvc.zones[zone].status}"
-                    for zone in cvc.zones
-                ]
-            ),
+            zone_status,
             f"| Network: {cvc.network_status}",
         )
 
 
         # ====================================================
-        # SELF-HEALING / AUTONOMOUS RECOVERY
+        # DIAGNOSTICS + SELF-HEALING
         # ====================================================
 
         if (
             not args.port
             and cvc.zones["REAR"].status == "OFFLINE"
             and not recovery_requested
+            and not recovery_completed
         ):
 
-            print(
-                "\n[DTC] "
-                "DTC-CAN-301: "
-                "Rear Zonal ECU communication lost"
-            )
+            print()
+
+            # -----------------------------------------------
+            # CVC DIAGNOSTICS
+            # -----------------------------------------------
+
+            faults = cvc.diagnostics()
+
+            for fault in faults:
+
+                print(
+                    f"[DTC] {fault}"
+                )
+
+
+            # -----------------------------------------------
+            # START SELF-HEALING
+            # -----------------------------------------------
 
             print(
                 "[SELF-HEALING] "
                 "Recovery request initiated..."
             )
 
-
-            # ------------------------------------------------
-            # CVC CREATES RECOVERY REQUEST
-            # ------------------------------------------------
-
-            cvc.request_recovery("REAR")
-
-
-            # ------------------------------------------------
-            # FIND SIMULATED REAR STM32
-            # ------------------------------------------------
-
-            rear_ecu = next(
-                ecu
-                for ecu in ecus
-                if ecu.zone == "REAR"
+            cvc.request_recovery(
+                "REAR"
             )
-
-
-            # ------------------------------------------------
-            # SIMULATE ESP32 / CAN DELIVERY
-            # ------------------------------------------------
-
-            command = recovery_frame("REAR")
-
-            rear_ecu.process_command(command)
 
             recovery_requested = True
 
-            print(
-                "[SELF-HEALING] "
-                "Recovery command delivered to Rear ECU."
+
+            # -----------------------------------------------
+            # SIMULATED RECOVERY DELIVERY
+            # -----------------------------------------------
+
+            # In the physical system this command will travel:
+            #
+            # CVC -> ESP32 Gateway -> CAN -> Rear STM32 ECU
+            #
+            # The current in-memory simulator uses a shared
+            # queue, so ECU-side command delivery is explicitly
+            # simulated here.
+
+            recovery_command = (
+                recovery_frame(
+                    "REAR"
+                )
+            )
+
+            command_accepted = (
+                rear_ecu.process_command(
+                    recovery_command
+                )
             )
 
             print(
                 "[SELF-HEALING] "
-                "Waiting for heartbeat verification...\n"
+                f"Recovery CAN ID: "
+                f"0x{recovery_command.arbitration_id:03X}"
             )
+
+            print(
+                "[SELF-HEALING] "
+                f"Rear ECU command accepted: "
+                f"{command_accepted}"
+            )
+
+            print(
+                "[SELF-HEALING] "
+                "Waiting for heartbeat verification..."
+            )
+
+            print()
 
 
         # ====================================================
@@ -278,8 +412,10 @@ def main() -> None:
             == "RECOVERED"
         ):
 
+            print()
+
             print(
-                "\n[RECOVERY SUCCESS] "
+                "[RECOVERY SUCCESS] "
                 "Rear Zonal ECU heartbeat restored."
             )
 
@@ -290,13 +426,19 @@ def main() -> None:
 
             print(
                 "[RECOVERY SUCCESS] "
-                "Vehicle network restored.\n"
+                "Vehicle network restored."
             )
 
-            recovery_requested = False
+            print(
+                "[RECOVERY SUCCESS] "
+                f"Recovery attempts: "
+                f"{cvc.zones['REAR'].recovery_attempts}"
+            )
 
-            # Prevent another artificial fault injection
-            fault_injected = True
+            print()
+
+            recovery_requested = False
+            recovery_completed = True
 
 
         # ====================================================
@@ -307,14 +449,55 @@ def main() -> None:
 
 
     # ========================================================
-    # FINAL DIAGNOSTICS
+    # FINAL REPORT
     # ========================================================
 
     if not args.port:
 
-        print("\n==============================================")
-        print("              FINAL DIAGNOSTICS")
-        print("==============================================")
+        print()
+        print("=" * 65)
+        print("                    FINAL SVA STATUS")
+        print("=" * 65)
+
+
+        # ----------------------------------------------------
+        # ZONAL ECU STATUS
+        # ----------------------------------------------------
+
+        for zone in cvc.zones:
+
+            state = cvc.zones[
+                zone
+            ]
+
+            print(
+                f"{zone:<6} ECU          : "
+                f"{state.status}"
+            )
+
+
+        # ----------------------------------------------------
+        # GATEWAY + NETWORK
+        # ----------------------------------------------------
+
+        print(
+            f"ESP32 Gateway      : "
+            f"{cvc.gateway_status}"
+        )
+
+        print(
+            f"Vehicle Network    : "
+            f"{cvc.network_status}"
+        )
+
+
+        # ====================================================
+        # FINAL DIAGNOSTICS
+        # ====================================================
+
+        print()
+        print("FINAL DIAGNOSTICS")
+        print("-" * 65)
 
         faults = cvc.diagnostics()
 
@@ -334,28 +517,56 @@ def main() -> None:
 
 
         # ====================================================
-        # DATA LOGGER INFORMATION
+        # SELF-HEALING RESULT
         # ====================================================
 
+        print()
+        print("SELF-HEALING STATUS")
+        print("-" * 65)
+
         print(
-            "\nData logging completed."
+            "Rear Recovery Status   : "
+            f"{cvc.zones['REAR'].recovery_status}"
         )
 
         print(
-            f"Log file: {logger.filepath}"
+            "Rear Recovery Attempts : "
+            f"{cvc.zones['REAR'].recovery_attempts}"
+        )
+
+
+        # ====================================================
+        # DATA LOGGING RESULT
+        # ====================================================
+
+        print()
+        print("DATA LOGGING")
+        print("-" * 65)
+
+        print(
+            "Status   : COMPLETED"
         )
 
         print(
-            "\nSimulation completed."
+            f"Log File : {logger.filepath}"
         )
 
+
+        # ====================================================
+        # COMPLETION
+        # ====================================================
+
+        print()
+        print("=" * 65)
         print(
-            "==============================================\n"
+            "        INTEGRATED SVA SIMULATION COMPLETED"
         )
+        print("=" * 65)
+        print()
 
 
 # ============================================================
-# START APPLICATION
+# APPLICATION ENTRY
 # ============================================================
 
 if __name__ == "__main__":
@@ -366,18 +577,16 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
 
+        print()
+        print("=" * 65)
+
         print(
-            "\n=============================================="
+            "SVA simulation stopped by user."
         )
 
         print(
-            "Simulation stopped by user."
+            "Central Vehicle Computer safely terminated."
         )
 
-        print(
-            "SVA CVC safely terminated."
-        )
-
-        print(
-            "==============================================\n"
-        )
+        print("=" * 65)
+        print()

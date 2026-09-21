@@ -8,7 +8,10 @@ changing the CVC protocol.
 from collections import deque
 from typing import Protocol
 
-from can_protocol import CANFrame
+try:
+    from .can_protocol import CANFrame
+except ImportError:
+    from can_protocol import CANFrame
 
 
 class GatewayTransport(Protocol):

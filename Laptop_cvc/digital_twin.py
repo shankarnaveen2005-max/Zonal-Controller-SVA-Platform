@@ -15,8 +15,19 @@ Features:
 """
 
 import argparse
+import os
+import sys
 import tkinter as tk
 from tkinter import ttk
+
+# Allow this file to import the dedicated Zonal_ECUs package when
+# launched directly as: python Laptop_cvc/digital_twin.py
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
+)
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from can_protocol import recovery_frame
 from cvc_platform import CentralVehicleComputer, ZONES
@@ -26,7 +37,9 @@ from esp32_gateway import (
     SerialGatewayTransport,
     SimulatedGatewayTransport,
 )
-from zonal_ecu import ZonalECU
+from Zonal_ECUs.Front_ECU.front_ecu import FrontZonalECU
+from Zonal_ECUs.Cabin_ECU.cabin_ecu import CabinZonalECU
+from Zonal_ECUs.Rear_ECU.rear_ecu import RearZonalECU
 from predictive_maintenance import (
     PredictiveMaintenance,
     ConditionData,
@@ -66,7 +79,7 @@ class DigitalTwin:
             "SVA Digital Twin | Central Vehicle Computer"
         )
 
-        self.root.geometry("1400x900")
+        self.root.geometry("1400x1000")
         self.root.minsize(1100, 750)
         self.root.configure(bg=BG)
 
@@ -102,8 +115,9 @@ class DigitalTwin:
 
         self.ecus = (
             {
-                zone: ZonalECU(zone)
-                for zone in ZONES
+                "FRONT": FrontZonalECU(),
+                "CABIN": CabinZonalECU(),
+                "REAR": RearZonalECU(),
             }
             if not port
             else {}
@@ -1204,7 +1218,7 @@ class DigitalTwin:
         panel = tk.Frame(
             self.root,
             bg=BG,
-            height=300,
+            height=390,
         )
 
         panel.pack(
@@ -1463,9 +1477,7 @@ class DigitalTwin:
 
         cabin = self.ecus[
             "CABIN"
-        ].telemetry(
-            self.elapsed
-        )
+        ].telemetry()
 
         if cabin is None:
             return
@@ -1499,9 +1511,7 @@ class DigitalTwin:
 
         cabin = self.ecus[
             "CABIN"
-        ].telemetry(
-            self.elapsed
-        )
+        ].telemetry()
 
         if cabin is None:
             return
@@ -2102,21 +2112,17 @@ class DigitalTwin:
 
             if not self.hardware_mode:
 
-                for ecu in (
-                    self.ecus.values()
-                ):
+                for ecu in self.ecus.values():
 
-                    heartbeat = (
-                        ecu.heartbeat(
-                            self.elapsed
-                        )
-                    )
+                    if not ecu.online:
+                        continue
 
-                    telemetry = (
-                        ecu.telemetry(
-                            self.elapsed
-                        )
-                    )
+                    # Dedicated zonal ECU simulation:
+                    # refresh local sensor values before transmission.
+                    ecu.update_sensors()
+
+                    heartbeat = ecu.heartbeat()
+                    telemetry = ecu.telemetry()
 
                     for frame in (
                         heartbeat,
@@ -2163,10 +2169,7 @@ class DigitalTwin:
 
                 network_health = 0.0
 
-            communication_health = min(
-                self.condition_data.communication_health,
-                network_health,
-            )
+            communication_health = network_health
 
             self.condition_data = (
                 ConditionData(
@@ -2395,35 +2398,48 @@ class DigitalTwin:
         # TELEMETRY TEXT
         # ====================================================
 
+        # Categorize telemetry by the Zonal ECU that generated it.
+        # Telemetry CAN IDs: FRONT 0x102, CABIN 0x202, REAR 0x302.
+        driver_status = (
+            "DETECTED"
+            if cabin.get("driver_detected")
+            else "NOT DETECTED"
+        )
+
+        doors_closed = sum(
+            value == "CLOSED"
+            for value in doors.values()
+        )
+
+        belts_worn = sum(
+            value == "WORN"
+            for value in belts.values()
+        )
+
         self.telemetry_label.config(
             text=(
-                "COLLECTIVE VEHICLE DATA\n"
-                "────────────────────────\n\n"
+                "FRONT ZONAL ECU  |  TELEMETRY CAN ID 0x102\n"
+                "────────────────────────────────────────\n"
+                f"Speed             : {front.get('speed', '--')} km/h\n"
+                f"Steering Angle    : {front.get('steering_angle', '--')}°\n"
+                f"Obstacle Distance : {front.get('obstacle_distance', '--')} m\n"
+                f"Obstacle Status   : {front.get('obstacle_status', '--')}\n\n"
 
-                f"Speed             "
-                f"{front.get('speed_kph', '--')} "
-                f"km/h\n"
+                "CABIN ZONAL ECU  |  TELEMETRY CAN ID 0x202\n"
+                "────────────────────────────────────────\n"
+                f"Temperature       : {cabin.get('temperature', '--')} °C\n"
+                f"Driver Detection  : {driver_status}\n"
+                f"Doors Closed      : {doors_closed}/4\n"
+                f"Seat Belts Worn   : {belts_worn}/4\n\n"
 
-                f"Cabin temperature "
-                f"{cabin.get('temperature_c', '--')} "
-                f"°C\n"
-
-                f"Driver            "
-                f"{'DETECTED' if cabin.get('driver_detected') else '--'}\n"
-
-                f"Front obstacle    "
-                f"{front.get('obstacle', '--')}\n"
-
-                f"Rear obstacle     "
-                f"{rear.get('obstacle', '--')}\n"
-
-                f"Doors             "
-                f"{sum(value == 'CLOSED' for value in doors.values())}"
-                f"/4 CLOSED\n"
-
-                f"Seat belts        "
-                f"{sum(value == 'WORN' for value in belts.values())}"
-                f"/4 WORN"
+                "REAR ZONAL ECU   |  TELEMETRY CAN ID 0x302\n"
+                "────────────────────────────────────────\n"
+                f"Obstacle Distance : {rear.get('obstacle_distance', '--')} m\n"
+                f"Obstacle Status   : {rear.get('obstacle_status', '--')}\n"
+                f"Brake Status      : {rear.get('brake_status', '--')}\n"
+                f"Rear Light        : {rear.get('rear_light_status', '--')}\n"
+                f"Wheel RPM         : {rear.get('wheel_rpm', '--')}\n"
+                f"Camera Status     : {rear.get('camera_status', '--')}"
             )
         )
 
