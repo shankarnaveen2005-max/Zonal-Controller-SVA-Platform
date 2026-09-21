@@ -21,9 +21,8 @@ import secrets
 import sqlite3
 
 from datetime import datetime, timezone
-
 from pathlib import Path
-
+from textwrap import dedent
 from typing import Any
 
 
@@ -410,7 +409,7 @@ def _vehicle_replica(
 
 
 
-    return """
+    return dedent("""
 
     <div class="model-shell">
 
@@ -534,7 +533,7 @@ def _vehicle_replica(
 
     </div>
 
-    """.format(
+    """).format(
 
         front_fill=front_fill,
 
@@ -577,8 +576,7 @@ def _vehicle_replica(
         belt2=belt_colors[2],
 
         belt3=belt_colors[3],
-
-    )
+    ).strip()
 
 
 
@@ -593,7 +591,7 @@ def _rear_camera_panel(camera: dict[str, Any]) -> str:
         signal_text = camera.get("signal", "NO SIGNAL")
         note = "Camera Not Connected"
 
-    return """
+    return dedent("""
 
     <div class="model-shell">
 
@@ -601,23 +599,29 @@ def _rear_camera_panel(camera: dict[str, Any]) -> str:
 
       <div class="camera-screen">
 
-        <div class="signal">NO SIGNAL</div>
+        <div class="signal">{signal_text}</div>
 
-        <div>Camera Not Connected</div>
+        <div>{note}</div>
 
       </div>
 
       <div class="camera-meta">Status : {status}
 
-Signal : {signal}
+        Signal : {signal}
 
-Location: {location}</div>
+        Location: {location}</div>
 
       <div class="sva-muted">Reserved for the future ESP32 camera stream</div>
 
     </div>
 
-    """
+    """).format(
+        status=camera.get("status", "OFFLINE"),
+        signal=camera.get("signal", "NO SIGNAL"),
+        location=camera.get("location", "REAR"),
+        signal_text=signal_text,
+        note=note,
+    ).strip()
 
 
 
