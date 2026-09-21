@@ -162,14 +162,6 @@ def _logout() -> None:
     st.rerun()
 
 
-def _metric_card(label: str, value: str, state: str = "online") -> None:
-    st.markdown(
-        f'<div class="sva-card"><div class="sva-muted">{label}</div>'
-        f'<h3 class="{state}">{value}</h3></div>',
-        unsafe_allow_html=True,
-    )
-
-
 def _vehicle_replica() -> str:
     return """
     <div class="model-shell">
@@ -259,19 +251,6 @@ def _dashboard() -> None:
         unsafe_allow_html=True,
     )
     st.divider()
-
-    st.subheader("Central Vehicle Computer")
-    cvc, can, ecus, clock = st.columns(4)
-    with cvc:
-        _metric_card("ESP32 Gateway", "CONNECTED")
-    with can:
-        _metric_card("CAN Network", "HEALTHY")
-    with ecus:
-        _metric_card("Active ECUs", "3 / 3")
-    with clock:
-        _metric_card("Session", role)
-
-    st.divider()
     st.subheader("Live Vehicle Model")
     vehicle, camera = st.columns([1.7, 1])
     with vehicle:
@@ -318,6 +297,42 @@ def _dashboard() -> None:
         st.info("🧠 Predictive Maintenance\n\nCondition: NORMAL\nRisk: LOW")
     with ota:
         st.info("📡 OTA Update\n\nFirmware System Ready")
+
+    st.divider()
+    st.subheader("OTA Firmware Update")
+    ota_left, ota_right = st.columns([1, 2])
+    with ota_left:
+        ota_zone = st.selectbox(
+            "Target ECU",
+            ["FRONT", "CABIN", "REAR"],
+            key="web_ota_zone",
+            disabled=role == "VIEWER",
+        )
+        ota_version = st.text_input(
+            "Firmware version",
+            value="v1.1.0",
+            key="web_ota_version",
+            disabled=role == "VIEWER",
+        )
+        ota_requested = st.button(
+            "Start OTA update",
+            type="primary",
+            use_container_width=True,
+            disabled=role == "VIEWER",
+        )
+    with ota_right:
+        if role == "VIEWER":
+            st.info("OTA updates require ENGINEER or ADMIN permission.")
+        elif ota_requested:
+            event = "OTA_UPDATE"
+            _audit(event, user_id, f"{ota_zone} | {ota_version}")
+            st.session_state.web_ota_message = (
+                f"{ota_zone} ECU update to {ota_version} completed successfully."
+            )
+        if st.session_state.get("web_ota_message"):
+            st.success(st.session_state.web_ota_message)
+        else:
+            st.info("Select a target ECU and firmware version to begin.")
 
     if role in {"ADMIN", "ENGINEER"}:
         st.divider()
