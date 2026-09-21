@@ -845,22 +845,11 @@ def _dashboard() -> None:
     st.divider()
 
     st.subheader("Live Vehicle Model")
-
     vehicle, camera = st.columns([1.7, 1])
-
     with vehicle:
-
-        st.markdown(
-
-            _vehicle_replica(faults, cabin_state),
-
-            unsafe_allow_html=True,
-
-        )
-
+        st.html(_vehicle_replica(faults, cabin_state))
     with camera:
-
-        st.markdown(_rear_camera_panel(vehicle_state["camera"]), unsafe_allow_html=True)
+        st.html(_rear_camera_panel(vehicle_state["camera"]))
 
 
 
