@@ -233,6 +233,14 @@ Location: REAR</div>
     """
 
 
+def _metric_card(label: str, value: str, state: str = "online") -> None:
+    st.markdown(
+        f'<div class="sva-card"><div class="sva-muted">{label}</div>'
+        f'<h3 class="{state}">{value}</h3></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _dashboard() -> None:
     user_id = st.session_state["user_id"]
     role = st.session_state["role"]
@@ -251,6 +259,18 @@ def _dashboard() -> None:
         unsafe_allow_html=True,
     )
     st.divider()
+    st.subheader("Central Vehicle Computer")
+    cvc, can, ecus, clock = st.columns(4)
+    with cvc:
+        _metric_card("ESP32 Gateway", "CONNECTED")
+    with can:
+        _metric_card("CAN Network", "HEALTHY")
+    with ecus:
+        _metric_card("Active ECUs", "3 / 3")
+    with clock:
+        _metric_card("Session", role)
+
+    st.divider()
     st.subheader("Live Vehicle Model")
     vehicle, camera = st.columns([1.7, 1])
     with vehicle:
@@ -261,30 +281,24 @@ def _dashboard() -> None:
     st.subheader("Zonal ECU Telemetry")
     front, cabin, rear = st.columns(3)
     with front:
-        st.markdown('<div class="sva-card">', unsafe_allow_html=True)
         st.markdown('<h3 class="online">FRONT ZONAL ECU — ONLINE</h3>', unsafe_allow_html=True)
         st.caption("CAN Heartbeat 0x101  •  Telemetry 0x102")
         st.write("Speed: **45 km/h**")
         st.write("Steering: **0°**")
         st.write("Obstacle: CLEAR")
-        st.markdown("</div>", unsafe_allow_html=True)
     with cabin:
-        st.markdown('<div class="sva-card">', unsafe_allow_html=True)
         st.markdown('<h3 class="online">CABIN ZONAL ECU — ONLINE</h3>', unsafe_allow_html=True)
         st.caption("CAN Heartbeat 0x201  •  Telemetry 0x202")
         st.write("Temperature: **26 °C**")
         st.write("Driver: DETECTED")
         st.write("Doors: CLOSED  •  Seat belts: WORN")
-        st.markdown("</div>", unsafe_allow_html=True)
     with rear:
-        st.markdown('<div class="sva-card">', unsafe_allow_html=True)
         st.markdown('<h3 class="online">REAR ZONAL ECU — ONLINE</h3>', unsafe_allow_html=True)
         st.caption("CAN Heartbeat 0x301  •  Telemetry 0x302")
         st.write("Obstacle: CLEAR")
         st.write("Parking Brake: ACTIVE")
         st.write("Rear light: **OFF**")
         st.write("Wheel RPM: **0**")
-        st.markdown("</div>", unsafe_allow_html=True)
 
     st.divider()
     st.subheader("CVC Engineering Intelligence")
