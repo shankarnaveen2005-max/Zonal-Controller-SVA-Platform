@@ -71,6 +71,20 @@ when no MQTT host is configured. Camera telemetry may include a
 `stream_url`; the actual camera video must be provided through a secure
 WebRTC, HLS, or MJPEG endpoint rather than the CAN payload.
 
+The desktop Digital Twin uses the same normalized snapshot contract. When
+`SVA_MQTT_HOST` is set for the CVC process, it publishes
+`sva/vehicle/state` after each CAN polling cycle. This makes the CVC the
+single source of truth:
+
+```text
+STM32 ECUs -> CAN -> ESP32 -> CVC
+                             |-> Desktop Digital Twin
+                             `-> MQTT -> Web Digital Twin
+```
+
+Without `SVA_MQTT_HOST`, the publisher is disabled and the desktop simulation
+continues to work normally.
+
 This prototype models a zonal-controller software vehicle architecture:
 
 ```text

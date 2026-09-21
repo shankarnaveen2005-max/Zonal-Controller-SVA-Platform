@@ -45,6 +45,7 @@ from predictive_maintenance import (
     ConditionData,
 )
 from ota_manager import OTAManager
+from live_data import MqttStatePublisher
 
 
 # ============================================================
@@ -125,6 +126,7 @@ class DigitalTwin:
 
         self.hardware_mode = port is not None
         self.elapsed = 0.0
+        self.live_publisher = MqttStatePublisher()
 
         # ====================================================
         # AUTONOMOUS RECOVERY
@@ -2257,6 +2259,10 @@ class DigitalTwin:
 
             self.logger.log(
                 self.cvc
+            )
+
+            self.live_publisher.publish(
+                self.cvc.vehicle_snapshot()
             )
 
             self._render()

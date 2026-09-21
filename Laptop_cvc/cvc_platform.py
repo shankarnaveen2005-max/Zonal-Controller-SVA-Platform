@@ -298,3 +298,11 @@ class CentralVehicleComputer:
             )
 
         return faults
+
+    def vehicle_snapshot(self) -> dict[str, Any]:
+        """Return the normalized state shared by desktop and web dashboards."""
+        try:
+            from live_data import snapshot_from_cvc
+        except ImportError:
+            from .live_data import snapshot_from_cvc
+        return snapshot_from_cvc(self)
