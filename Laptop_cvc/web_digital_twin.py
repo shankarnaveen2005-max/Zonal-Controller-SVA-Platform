@@ -272,10 +272,31 @@ def _faults() -> set[str]:
     return st.session_state.setdefault("web_faults", set())
 
 
+def _cabin_state() -> dict[str, dict[str, str]]:
+    return st.session_state.setdefault(
+        "web_cabin_state",
+        {
+            "doors": {
+                "Front Left": "CLOSED",
+                "Front Right": "CLOSED",
+                "Rear Left": "CLOSED",
+                "Rear Right": "CLOSED",
+            },
+            "seatbelts": {
+                "Driver": "WORN",
+                "Front Passenger": "WORN",
+                "Rear Left": "WORN",
+                "Rear Right": "WORN",
+            },
+        },
+    )
+
+
 def _dashboard() -> None:
     user_id = st.session_state["user_id"]
     role = st.session_state["role"]
     faults = _faults()
+    cabin_state = _cabin_state()
     gateway_fault = "ESP32_GATEWAY" in faults
     ecu_faults = {"FRONT", "CABIN", "REAR"} & faults
     network_healthy = not faults
@@ -336,7 +357,10 @@ def _dashboard() -> None:
         st.caption("CAN Heartbeat 0x201  •  Telemetry 0x202")
         st.write("Temperature: **26 °C**")
         st.write("Driver: DETECTED")
-        st.write("Doors: CLOSED  •  Seat belts: WORN")
+        doors_closed = sum(value == "CLOSED" for value in cabin_state["doors"].values())
+        belts_worn = sum(value == "WORN" for value in cabin_state["seatbelts"].values())
+        st.write(f"Doors: **{doors_closed}/4 CLOSED**")
+        st.write(f"Seat belts: **{belts_worn}/4 WORN**")
     with rear:
         state = "OFFLINE" if "REAR" in faults else "ONLINE"
         style = "offline" if state == "OFFLINE" else "online"
@@ -346,6 +370,54 @@ def _dashboard() -> None:
         st.write("Parking Brake: ACTIVE")
         st.write("Rear light: **OFF**")
         st.write("Wheel RPM: **0**")
+
+    st.divider()
+    st.subheader("Cabin Controls")
+    if role == "VIEWER":
+        st.info("Door and seat-belt controls require ENGINEER or ADMIN permission.")
+    else:
+        door_col, belt_col = st.columns(2)
+        with door_col:
+            st.markdown("**Four-door status**")
+            for door, current in cabin_state["doors"].items():
+                if st.button(
+                    f"{door}: {current}",
+                    key=f"web_door_{door}",
+                    use_container_width=True,
+                ):
+                    cabin_state["doors"][door] = (
+                        "OPEN" if current == "CLOSED" else "CLOSED"
+                    )
+                    _audit(
+                        "DOOR_STATE_CHANGED",
+                        user_id,
+                        f"{door} | {cabin_state['doors'][door]}",
+                    )
+                    st.rerun()
+        with belt_col:
+            st.markdown("**Four-seat-belt status**")
+            for seat, current in cabin_state["seatbelts"].items():
+                if st.button(
+                    f"{seat}: {current}",
+                    key=f"web_belt_{seat}",
+                    use_container_width=True,
+                ):
+                    cabin_state["seatbelts"][seat] = (
+                        "NOT WORN" if current == "WORN" else "WORN"
+                    )
+                    _audit(
+                        "SEATBELT_STATE_CHANGED",
+                        user_id,
+                        f"{seat} | {cabin_state['seatbelts'][seat]}",
+                    )
+                    st.rerun()
+        if st.button("Restore all doors and seat belts", use_container_width=True):
+            for door in cabin_state["doors"]:
+                cabin_state["doors"][door] = "CLOSED"
+            for seat in cabin_state["seatbelts"]:
+                cabin_state["seatbelts"][seat] = "WORN"
+            _audit("CABIN_SAFETY_STATE_RESTORED", user_id)
+            st.rerun()
 
     st.divider()
     st.subheader("CVC Engineering Intelligence")
