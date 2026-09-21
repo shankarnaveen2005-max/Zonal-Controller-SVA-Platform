@@ -162,7 +162,10 @@ def _logout() -> None:
     st.rerun()
 
 
-def _vehicle_replica(faults: set[str]) -> str:
+def _vehicle_replica(
+    faults: set[str],
+    cabin_state: dict[str, dict[str, str]],
+) -> str:
     def zone_style(zone: str) -> tuple[str, str, str]:
         if zone in faults:
             return "#713c40", "#ef6262", "OFFLINE"
@@ -171,6 +174,34 @@ def _vehicle_replica(faults: set[str]) -> str:
     front_fill, front_stroke, front_state = zone_style("FRONT")
     cabin_fill, cabin_stroke, cabin_state = zone_style("CABIN")
     rear_fill, rear_stroke, rear_state = zone_style("REAR")
+
+    def state_color(value: str, good: str, bad: str) -> str:
+        return good if value in {"CLOSED", "WORN"} else bad
+
+    doors = cabin_state["doors"]
+    belts = cabin_state["seatbelts"]
+    door_colors = [
+        (
+            state_color(doors["Front Left"], "#244936", "#713c40"),
+            state_color(doors["Front Left"], "#27c281", "#ef6262"),
+        ),
+        (
+            state_color(doors["Front Right"], "#244936", "#713c40"),
+            state_color(doors["Front Right"], "#27c281", "#ef6262"),
+        ),
+        (
+            state_color(doors["Rear Left"], "#244936", "#713c40"),
+            state_color(doors["Rear Left"], "#27c281", "#ef6262"),
+        ),
+        (
+            state_color(doors["Rear Right"], "#244936", "#713c40"),
+            state_color(doors["Rear Right"], "#27c281", "#ef6262"),
+        ),
+    ]
+    belt_colors = [
+        state_color(belts[name], "#27c281", "#ef6262")
+        for name in ("Driver", "Front Passenger", "Rear Left", "Rear Right")
+    ]
 
     return """
     <div class="model-shell">
@@ -200,17 +231,20 @@ def _vehicle_replica(faults: set[str]) -> str:
           <rect x="257" y="38" width="25" height="10" rx="4"/></g>
         <g fill="#e85a5a" stroke="#ff9b9b"><rect x="142" y="451" width="25" height="10" rx="4"/>
           <rect x="257" y="451" width="25" height="10" rx="4"/></g>
-        <g fill="#244936" stroke="#27c281" stroke-width="2">
-          <rect x="117" y="145" width="10" height="74"/><rect x="293" y="145" width="10" height="74"/>
-          <rect x="117" y="250" width="10" height="74"/><rect x="293" y="250" width="10" height="74"/>
+        <g stroke-width="2">
+          <rect x="117" y="145" width="10" height="74" fill="{door0_fill}" stroke="{door0_stroke}"/>
+          <rect x="293" y="145" width="10" height="74" fill="{door1_fill}" stroke="{door1_stroke}"/>
+          <rect x="117" y="250" width="10" height="74" fill="{door2_fill}" stroke="{door2_stroke}"/>
+          <rect x="293" y="250" width="10" height="74" fill="{door3_fill}" stroke="{door3_stroke}"/>
         </g>
         <g fill="#344b59" stroke="#b3c5cc" stroke-width="2">
           <rect x="145" y="148" width="55" height="65" rx="7"/><rect x="220" y="148" width="55" height="65" rx="7"/>
           <rect x="145" y="252" width="55" height="65" rx="7"/><rect x="220" y="252" width="55" height="65" rx="7"/>
         </g>
-        <g stroke="#27c281" stroke-width="5"><line x1="155" y1="158" x2="190" y2="203"/>
-          <line x1="230" y1="158" x2="265" y2="203"/><line x1="155" y1="262" x2="190" y2="307"/>
-          <line x1="230" y1="262" x2="265" y2="307"/></g>
+        <g stroke-width="5"><line x1="155" y1="158" x2="190" y2="203" stroke="{belt0}"/>
+          <line x1="230" y1="158" x2="265" y2="203" stroke="{belt1}"/>
+          <line x1="155" y1="262" x2="190" y2="307" stroke="{belt2}"/>
+          <line x1="230" y1="262" x2="265" y2="307" stroke="{belt3}"/></g>
         <g stroke-width="3">
           <rect x="119" y="52" width="182" height="58" rx="8"
                 fill="{front_fill}" stroke="{front_stroke}" opacity=".88"/>
@@ -241,6 +275,18 @@ def _vehicle_replica(faults: set[str]) -> str:
         rear_fill=rear_fill,
         rear_stroke=rear_stroke,
         rear_state=rear_state,
+        door0_fill=door_colors[0][0],
+        door0_stroke=door_colors[0][1],
+        door1_fill=door_colors[1][0],
+        door1_stroke=door_colors[1][1],
+        door2_fill=door_colors[2][0],
+        door2_stroke=door_colors[2][1],
+        door3_fill=door_colors[3][0],
+        door3_stroke=door_colors[3][1],
+        belt0=belt_colors[0],
+        belt1=belt_colors[1],
+        belt2=belt_colors[2],
+        belt3=belt_colors[3],
     )
 
 
@@ -336,7 +382,10 @@ def _dashboard() -> None:
     st.subheader("Live Vehicle Model")
     vehicle, camera = st.columns([1.7, 1])
     with vehicle:
-        st.markdown(_vehicle_replica(faults), unsafe_allow_html=True)
+        st.markdown(
+            _vehicle_replica(faults, cabin_state),
+            unsafe_allow_html=True,
+        )
     with camera:
         st.markdown(_rear_camera_panel(), unsafe_allow_html=True)
 
