@@ -21,7 +21,7 @@ ROLES = ("ADMIN", "ENGINEER", "VIEWER")
 
 st.set_page_config(
     page_title="SVA Digital Twin",
-    page_icon="🚗",
+    page_icon="SVA",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -122,7 +122,7 @@ def _verify_password(password: str, encoded_hash: str) -> bool:
 
 def _login() -> None:
     st.markdown(
-        '<div class="sva-title">🚗 SVA DIGITAL TWIN</div>'
+        '<div class="sva-title">SVA DIGITAL TWIN</div>'
         '<p class="sva-muted">Secure zonal vehicle architecture platform</p>',
         unsafe_allow_html=True,
     )
@@ -289,7 +289,7 @@ def _dashboard() -> None:
         st.caption("Authenticated session")
 
     st.markdown(
-        '<div class="sva-title">🚗 SVA DIGITAL TWIN</div>'
+        '<div class="sva-title">SVA DIGITAL TWIN</div>'
         '<p class="sva-muted">Zonal Controller-Based Software Vehicle Architecture</p>',
         unsafe_allow_html=True,
     )
