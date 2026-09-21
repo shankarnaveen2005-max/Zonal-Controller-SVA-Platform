@@ -28,6 +28,7 @@ from typing import Any
 
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 
@@ -411,13 +412,24 @@ def _vehicle_replica(
 
     return dedent("""
 
+    <style>
+      html, body {{ margin: 0; background: transparent; }}
+      .model-shell {{ background: #1b2935; border: 1px solid #395361;
+        border-radius: 12px; padding: 14px; color: #e8f1f5;
+        font-family: Arial, sans-serif; }}
+      .sva-muted {{ color: #9bb0b8; }}
+      .zone-caption {{ fill: #e8f1f5; font: 700 15px Arial, sans-serif; }}
+      .can-caption {{ fill: #9fc0ce; font: 12px monospace; }}
+      svg {{ display: block; }}
+    </style>
     <div class="model-shell">
 
       <div class="sva-muted"><b>LIVE VEHICLE MODEL</b></div>
 
       <svg viewBox="0 0 620 510" width="100%" role="img"
 
-           aria-label="Front cabin rear zonal vehicle model">
+           aria-label="Front cabin rear zonal vehicle model"
+           height="510" preserveAspectRatio="xMidYMid meet">
 
         <text x="210" y="22" text-anchor="middle" fill="#b8cbd3"
 
@@ -593,6 +605,21 @@ def _rear_camera_panel(camera: dict[str, Any]) -> str:
 
     return dedent("""
 
+    <style>
+      html, body {{ margin: 0; background: transparent; }}
+      .model-shell {{ background: #1b2935; border: 1px solid #395361;
+        border-radius: 12px; padding: 14px; color: #e8f1f5;
+        font-family: Arial, sans-serif; }}
+      .sva-muted {{ color: #9bb0b8; }}
+      .camera-screen {{ min-height: 330px; background: #030609;
+        border: 1px solid #526a75; border-radius: 8px; display: flex;
+        flex-direction: column; align-items: center; justify-content: center;
+        color: #dbe7eb; }}
+      .camera-screen .signal {{ color: #ef6262; font-size: 1.5rem;
+        font-weight: 700; }}
+      .camera-meta {{ color: #ef6262; font-family: monospace; font-weight: 700;
+        white-space: pre-line; margin-top: 14px; }}
+    </style>
     <div class="model-shell">
 
       <div class="sva-muted"><b>REAR CAMERA</b></div>
@@ -847,9 +874,17 @@ def _dashboard() -> None:
     st.subheader("Live Vehicle Model")
     vehicle, camera = st.columns([1.7, 1])
     with vehicle:
-        st.html(_vehicle_replica(faults, cabin_state))
+        components.html(
+            _vehicle_replica(faults, cabin_state),
+            height=570,
+            scrolling=False,
+        )
     with camera:
-        st.html(_rear_camera_panel(vehicle_state["camera"]))
+        components.html(
+            _rear_camera_panel(vehicle_state["camera"]),
+            height=430,
+            scrolling=False,
+        )
 
 
 
