@@ -28,7 +28,6 @@ from typing import Any
 
 import streamlit as st
 import streamlit.components.v1 as components
-from streamlit_autorefresh import st_autorefresh
 
 try:
     import paho.mqtt.client as mqtt
@@ -886,9 +885,9 @@ def _poll_hardware() -> str:
 
 
 
+@st.fragment(run_every="2s")
 def _dashboard() -> None:
 
-    st_autorefresh(interval=2000, key="sva_live_refresh")
     user_id = st.session_state["user_id"]
 
     role = st.session_state["role"]
