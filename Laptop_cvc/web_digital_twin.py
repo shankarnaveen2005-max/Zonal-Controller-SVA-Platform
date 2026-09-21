@@ -162,7 +162,16 @@ def _logout() -> None:
     st.rerun()
 
 
-def _vehicle_replica() -> str:
+def _vehicle_replica(faults: set[str]) -> str:
+    def zone_style(zone: str) -> tuple[str, str, str]:
+        if zone in faults:
+            return "#713c40", "#ef6262", "OFFLINE"
+        return "#244936", "#27c281", "ONLINE"
+
+    front_fill, front_stroke, front_state = zone_style("FRONT")
+    cabin_fill, cabin_stroke, cabin_state = zone_style("CABIN")
+    rear_fill, rear_stroke, rear_state = zone_style("REAR")
+
     return """
     <div class="model-shell">
       <div class="sva-muted"><b>LIVE VEHICLE MODEL</b></div>
@@ -202,10 +211,18 @@ def _vehicle_replica() -> str:
         <g stroke="#27c281" stroke-width="5"><line x1="155" y1="158" x2="190" y2="203"/>
           <line x1="230" y1="158" x2="265" y2="203"/><line x1="155" y1="262" x2="190" y2="307"/>
           <line x1="230" y1="262" x2="265" y2="307"/></g>
+        <g stroke-width="3">
+          <rect x="119" y="52" width="182" height="58" rx="8"
+                fill="{front_fill}" stroke="{front_stroke}" opacity=".88"/>
+          <rect x="114" y="122" width="192" height="236" rx="8"
+                fill="{cabin_fill}" stroke="{cabin_stroke}" opacity=".50"/>
+          <rect x="119" y="370" width="182" height="74" rx="8"
+                fill="{rear_fill}" stroke="{rear_stroke}" opacity=".88"/>
+        </g>
         <g class="zone-caption" text-anchor="middle">
-          <text x="210" y="79">FRONT ZONAL ECU</text>
-          <text x="210" y="178">CABIN • 4 SEATS</text>
-          <text x="210" y="414">REAR ZONAL ECU</text>
+          <text x="210" y="79">FRONT ZONAL ECU • {front_state}</text>
+          <text x="210" y="178">CABIN • 4 SEATS • {cabin_state}</text>
+          <text x="210" y="414">REAR ZONAL ECU • {rear_state}</text>
         </g>
         <g class="can-caption" text-anchor="middle">
           <text x="210" y="98">0x101 / 0x102</text>
@@ -214,7 +231,17 @@ def _vehicle_replica() -> str:
         </g>
       </svg>
     </div>
-    """
+    """.format(
+        front_fill=front_fill,
+        front_stroke=front_stroke,
+        front_state=front_state,
+        cabin_fill=cabin_fill,
+        cabin_stroke=cabin_stroke,
+        cabin_state=cabin_state,
+        rear_fill=rear_fill,
+        rear_stroke=rear_stroke,
+        rear_state=rear_state,
+    )
 
 
 def _rear_camera_panel() -> str:
@@ -288,7 +315,7 @@ def _dashboard() -> None:
     st.subheader("Live Vehicle Model")
     vehicle, camera = st.columns([1.7, 1])
     with vehicle:
-        st.markdown(_vehicle_replica(), unsafe_allow_html=True)
+        st.markdown(_vehicle_replica(faults), unsafe_allow_html=True)
     with camera:
         st.markdown(_rear_camera_panel(), unsafe_allow_html=True)
 
