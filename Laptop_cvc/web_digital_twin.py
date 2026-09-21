@@ -231,6 +231,14 @@ def _vehicle_replica(
           <rect x="257" y="38" width="25" height="10" rx="4"/></g>
         <g fill="#e85a5a" stroke="#ff9b9b"><rect x="142" y="451" width="25" height="10" rx="4"/>
           <rect x="257" y="451" width="25" height="10" rx="4"/></g>
+        <g stroke-width="3">
+          <rect x="119" y="52" width="182" height="58" rx="8"
+                fill="{front_fill}" stroke="{front_stroke}" opacity=".88"/>
+          <rect x="114" y="122" width="192" height="236" rx="8"
+                fill="{cabin_fill}" stroke="{cabin_stroke}" opacity=".18"/>
+          <rect x="119" y="370" width="182" height="74" rx="8"
+                fill="{rear_fill}" stroke="{rear_stroke}" opacity=".88"/>
+        </g>
         <g stroke-width="2">
           <rect x="117" y="145" width="10" height="74" fill="{door0_fill}" stroke="{door0_stroke}"/>
           <rect x="293" y="145" width="10" height="74" fill="{door1_fill}" stroke="{door1_stroke}"/>
@@ -245,14 +253,6 @@ def _vehicle_replica(
           <line x1="230" y1="158" x2="265" y2="203" stroke="{belt1}"/>
           <line x1="155" y1="262" x2="190" y2="307" stroke="{belt2}"/>
           <line x1="230" y1="262" x2="265" y2="307" stroke="{belt3}"/></g>
-        <g stroke-width="3">
-          <rect x="119" y="52" width="182" height="58" rx="8"
-                fill="{front_fill}" stroke="{front_stroke}" opacity=".88"/>
-          <rect x="114" y="122" width="192" height="236" rx="8"
-                fill="{cabin_fill}" stroke="{cabin_stroke}" opacity=".50"/>
-          <rect x="119" y="370" width="182" height="74" rx="8"
-                fill="{rear_fill}" stroke="{rear_stroke}" opacity=".88"/>
-        </g>
         <g class="zone-caption" text-anchor="middle">
           <text x="210" y="79">FRONT ZONAL ECU • {front_state}</text>
           <text x="210" y="178">CABIN • 4 SEATS • {cabin_state}</text>
