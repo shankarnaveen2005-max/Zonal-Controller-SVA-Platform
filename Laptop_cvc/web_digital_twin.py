@@ -282,7 +282,25 @@ def _login() -> None:
 
         with st.form("login_form"):
 
-            user_id = st.text_input("User ID", autocomplete="username")
+            selected_role = st.selectbox(
+                "Account type",
+                ROLES,
+                format_func=lambda role: {
+                    "ADMIN": "ADMIN - Administrator",
+                    "ENGINEER": "ENGINEER - Engineering access",
+                    "VIEWER": "VIEWER - Read-only monitoring",
+                }[role],
+            )
+            role_users = [
+                user_id
+                for user_id, configured_user in _users().items()
+                if configured_user["role"] == selected_role
+            ]
+            user_id = st.selectbox(
+                "User ID",
+                role_users,
+                disabled=not role_users,
+            )
 
             password = st.text_input(
 
@@ -296,7 +314,11 @@ def _login() -> None:
 
             user = _users().get(user_id)
 
-            if user and _verify_password(password, user["password_hash"]):
+            if (
+                user
+                and user["role"] == selected_role
+                and _verify_password(password, user["password_hash"])
+            ):
 
                 st.session_state.authenticated = True
 
