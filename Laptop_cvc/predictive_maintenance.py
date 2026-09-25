@@ -65,6 +65,30 @@ class MaintenanceResult:
     recommendation: str
 
 
+def apply_v2x_context(
+    result: MaintenanceResult,
+    alerts: list[object],
+) -> MaintenanceResult:
+    """Add external safety-alert context without changing the ML prediction."""
+    if not alerts:
+        return result
+
+    critical = any(
+        getattr(alert, "payload", {}).get("severity") == "CRITICAL"
+        for alert in alerts
+    )
+    adjustment = 20.0 if critical else 10.0
+    return MaintenanceResult(
+        condition="CRITICAL" if critical else result.condition,
+        confidence=result.confidence,
+        risk_score=min(100.0, result.risk_score + adjustment),
+        recommendation=(
+            "V2X safety alert active. Review external hazard before continuing. "
+            + result.recommendation
+        ),
+    )
+
+
 # ============================================================
 # SYNTHETIC TRAINING DATA GENERATOR
 # ============================================================

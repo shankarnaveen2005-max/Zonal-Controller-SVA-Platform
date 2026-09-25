@@ -95,3 +95,33 @@ after three seconds.
 5. Run the CVC with `--port`; hardware mode stops generating simulated ECU
    frames and only consumes real CAN data.
 6. Keep heartbeat timeout and diagnostics enabled during bench testing.
+
+## V2X communication
+
+The CVC can publish an application-level Basic Safety Message (BSM) and receive
+nearby V2X alerts through the optional `V2XService` in `v2x.py`. It runs after
+CAN frames have been validated by the CVC, so V2X does not bypass the STM32,
+CAN, or gateway safety checks.
+
+Configure an MQTT-connected V2X gateway with:
+
+```text
+SVA_V2X_HOST=broker.example.com
+SVA_V2X_PORT=8883
+SVA_V2X_STATION_ID=vehicle-001
+SVA_V2X_PUBLISH_TOPIC=sva/v2x/out
+SVA_V2X_SUBSCRIBE_TOPIC=sva/v2x/in
+SVA_V2X_TLS=true
+SVA_V2X_USERNAME=v2x-client
+SVA_V2X_PASSWORD=...
+```
+
+The CVC publishes a JSON message containing `message_type`, `station_id`,
+`timestamp`, and the current vehicle state. Incoming messages are validated and
+reported as V2X alerts by `main.py`.
+
+This is an application adapter, not a certified C-V2X, DSRC, or ITS-G5 radio
+implementation. For real vehicle-to-vehicle, vehicle-to-infrastructure, or
+vehicle-to-pedestrian communication, connect the MQTT gateway to a suitable
+V2X modem and implement the required regional security, certificate, message
+encoding, latency, and safety requirements.

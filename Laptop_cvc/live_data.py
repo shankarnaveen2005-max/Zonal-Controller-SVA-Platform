@@ -18,11 +18,23 @@ def _camera_state(rear: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def snapshot_from_cvc(cvc: Any) -> dict[str, Any]:
+def snapshot_from_cvc(
+    cvc: Any,
+    v2x_alerts: list[Any] | None = None,
+) -> dict[str, Any]:
     """Convert CVC zone state into the web/dashboard payload contract."""
     front = cvc.zones["FRONT"].telemetry
     cabin = cvc.zones["CABIN"].telemetry
     rear = cvc.zones["REAR"].telemetry
+    alerts = [
+        {
+            "message_type": getattr(alert, "message_type", "ALERT"),
+            "station_id": getattr(alert, "station_id", "unknown"),
+            "timestamp": getattr(alert, "timestamp", ""),
+            "payload": getattr(alert, "payload", {}),
+        }
+        for alert in (v2x_alerts or [])
+    ]
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "front": {
@@ -48,6 +60,10 @@ def snapshot_from_cvc(cvc: Any) -> dict[str, Any]:
             "wheel_rpm": rear.get("wheel_rpm", 0),
         },
         "camera": _camera_state(rear),
+        "v2x": {
+            "status": "ALERT" if alerts else "CLEAR",
+            "alerts": alerts[-20:],
+        },
     }
 
 

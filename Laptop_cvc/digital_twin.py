@@ -43,9 +43,11 @@ from Zonal_ECUs.Rear_ECU.rear_ecu import RearZonalECU
 from predictive_maintenance import (
     PredictiveMaintenance,
     ConditionData,
+    apply_v2x_context,
 )
 from ota_manager import OTAManager
 from live_data import MqttStatePublisher
+from v2x import V2XService
 
 
 # ============================================================
@@ -127,6 +129,8 @@ class DigitalTwin:
         self.hardware_mode = port is not None
         self.elapsed = 0.0
         self.live_publisher = MqttStatePublisher()
+        self.v2x = V2XService()
+        self.v2x_alerts = []
 
         # ====================================================
         # AUTONOMOUS RECOVERY
@@ -2253,6 +2257,13 @@ class DigitalTwin:
                 )
             )
 
+            self.v2x_alerts.extend(self.v2x.receive_alerts())
+            self.v2x_alerts = self.v2x_alerts[-20:]
+            self.ml_result = apply_v2x_context(
+                self.ml_result,
+                self.v2x_alerts,
+            )
+
             # =================================================
             # DATA LOGGING
             # =================================================
@@ -2261,9 +2272,21 @@ class DigitalTwin:
                 self.cvc
             )
 
-            self.live_publisher.publish(
-                self.cvc.vehicle_snapshot()
-            )
+            snapshot = self.cvc.vehicle_snapshot()
+            snapshot["v2x"] = {
+                "status": "ALERT" if self.v2x_alerts else "CLEAR",
+                "alerts": [
+                    {
+                        "message_type": alert.message_type,
+                        "station_id": alert.station_id,
+                        "timestamp": alert.timestamp,
+                        "payload": alert.payload,
+                    }
+                    for alert in self.v2x_alerts
+                ],
+            }
+            self.v2x.publish_basic_safety_message(snapshot)
+            self.live_publisher.publish(snapshot)
 
             self._render()
 
@@ -2651,6 +2674,9 @@ class DigitalTwin:
 
                 f"Comm Health  : "
                 f"{data.communication_health:.0f}%\n\n"
+
+                f"V2X Alerts   : "
+                f"{len(self.v2x_alerts)}\n\n"
 
                 f"Recommendation:\n"
                 f"{result.recommendation}"

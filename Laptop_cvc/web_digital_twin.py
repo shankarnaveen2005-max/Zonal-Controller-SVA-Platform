@@ -749,6 +749,7 @@ def _vehicle_state() -> dict[str, Any]:
             "cabin": {"temperature": 26.0, "driver_detected": True, "doors": cabin["doors"], "seatbelts": cabin["seatbelts"]},
             "rear": {"obstacle_distance": 30.0, "obstacle_status": "CLEAR", "parking_brake": "ACTIVE", "rear_light": "OFF", "wheel_rpm": 0},
             "camera": {"available": False, "status": "OFFLINE", "signal": "NO SIGNAL", "location": "REAR"},
+                "v2x": {"status": "CLEAR", "alerts": []},
             "last_update": datetime.now(timezone.utc).isoformat(),
             "connection": "SIMULATION",
         },
@@ -790,6 +791,12 @@ def _validate_hardware_payload(payload: Any) -> dict[str, Any] | None:
         incoming = payload.get(section)
         if isinstance(incoming, dict):
             validated[section] = incoming
+        v2x = payload.get("v2x")
+        if isinstance(v2x, dict) and isinstance(v2x.get("alerts", []), list):
+            validated["v2x"] = {
+                "status": str(v2x.get("status", "CLEAR")),
+                "alerts": v2x["alerts"][-20:],
+            }
     return validated or None
 
 
@@ -891,8 +898,6 @@ def _dashboard() -> None:
     user_id = st.session_state["user_id"]
 
     role = st.session_state["role"]
-
-    faults = _faults()
 
     cabin_state = _cabin_state()
 
@@ -1188,8 +1193,14 @@ def _dashboard() -> None:
                    "🔧 Self-Healing\n\nRecovery System Ready")
 
     with ml:
-
-        st.info("🧠 Predictive Maintenance\n\nCondition: NORMAL\nRisk: LOW")
+        if vehicle_state["v2x"]["alerts"]:
+            st.warning(
+                "🧠 Predictive Maintenance\n\n"
+                "V2X hazard context active\n"
+                "Risk: REVIEW REQUIRED"
+            )
+        else:
+            st.info("🧠 Predictive Maintenance\n\nCondition: NORMAL\nRisk: LOW")
 
     with ota:
 

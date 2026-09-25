@@ -32,8 +32,11 @@ if PROJECT_ROOT not in sys.path:
 from can_protocol import recovery_frame
 from cvc_platform import CentralVehicleComputer
 from data_logging import DataLogger
+from live_data import MqttStatePublisher, snapshot_from_cvc
+from v2x import V2XService
 
 from esp32_gateway import (
+    DirectCANTransport,
     ESP32Gateway,
     SerialGatewayTransport,
     SimulatedGatewayTransport,
@@ -75,6 +78,24 @@ def main() -> None:
     )
 
     parser.add_argument(
+        "--can-channel",
+        help="Direct CAN interface name, for example can0 or vcan0",
+    )
+
+    parser.add_argument(
+        "--can-bustype",
+        default="socketcan",
+        help="python-can bus type for direct CAN hardware mode",
+    )
+
+    parser.add_argument(
+        "--can-bitrate",
+        type=int,
+        default=500000,
+        help="CAN bitrate for direct CAN hardware mode",
+    )
+
+    parser.add_argument(
         "--duration",
         type=float,
         default=12.0,
@@ -91,7 +112,15 @@ def main() -> None:
     # ESP32 GATEWAY
     # ========================================================
 
-    if args.port:
+    if args.can_channel:
+
+        transport = DirectCANTransport(
+            channel=args.can_channel,
+            bustype=args.can_bustype,
+            bitrate=args.can_bitrate,
+        )
+
+    elif args.port:
 
         transport = SerialGatewayTransport(
             args.port,
@@ -121,13 +150,15 @@ def main() -> None:
     # ========================================================
 
     logger = DataLogger()
+    state_publisher = MqttStatePublisher()
+    v2x = V2XService()
 
 
     # ========================================================
     # DEDICATED ZONAL ECUs
     # ========================================================
 
-    if not args.port:
+    if not args.port and not args.can_channel:
 
         front_ecu = FrontZonalECU()
         cabin_ecu = CabinZonalECU()
@@ -165,10 +196,16 @@ def main() -> None:
         "Data Logging       : ENABLED"
     )
 
-    if args.port:
+    if args.can_channel:
 
         print(
-            "Operating Mode     : HARDWARE"
+            "Operating Mode     : HARDWARE CAN"
+        )
+
+    elif args.port:
+
+        print(
+            "Operating Mode     : HARDWARE ESP32"
         )
 
     else:
@@ -210,6 +247,7 @@ def main() -> None:
 
     while (
         args.port
+        or args.can_channel
         or time.monotonic() - started < args.duration
     ):
 
@@ -223,7 +261,7 @@ def main() -> None:
         # SIMULATION MODE
         # ====================================================
 
-        if not args.port:
+        if not args.port and not args.can_channel:
 
             # ------------------------------------------------
             # REAR ECU FAULT INJECTION
@@ -289,6 +327,17 @@ def main() -> None:
 
         cvc.poll()
 
+        v2x_alerts = v2x.receive_alerts()
+        snapshot = snapshot_from_cvc(cvc, v2x_alerts)
+        state_publisher.publish(snapshot)
+        v2x.publish_basic_safety_message(snapshot)
+
+        for alert in v2x_alerts:
+            print(
+                f"[V2X] {alert.message_type} received from "
+                f"{alert.station_id}"
+            )
+
 
         # ====================================================
         # DATA LOGGING
@@ -322,6 +371,7 @@ def main() -> None:
 
         if (
             not args.port
+            and not args.can_channel
             and cvc.zones["REAR"].status == "OFFLINE"
             and not recovery_requested
             and not recovery_completed
@@ -452,7 +502,7 @@ def main() -> None:
     # FINAL REPORT
     # ========================================================
 
-    if not args.port:
+    if not args.port and not args.can_channel:
 
         print()
         print("=" * 65)
