@@ -922,6 +922,7 @@ def _dashboard() -> None:
 
     role = st.session_state["role"]
 
+    faults = _faults()
     cabin_state = _cabin_state()
 
     connection = _poll_hardware()
