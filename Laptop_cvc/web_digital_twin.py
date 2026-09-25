@@ -283,13 +283,8 @@ def _login() -> None:
         with st.form("login_form"):
 
             selected_role = st.selectbox(
-                "Account type",
+                "User ID category",
                 ROLES,
-                format_func=lambda role: {
-                    "ADMIN": "ADMIN - Administrator",
-                    "ENGINEER": "ENGINEER - Engineering access",
-                    "VIEWER": "VIEWER - Read-only monitoring",
-                }[role],
             )
             role_users = [
                 user_id
