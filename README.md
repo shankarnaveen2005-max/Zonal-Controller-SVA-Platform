@@ -16,6 +16,18 @@ a hash locally without writing the password to a file:
 python Laptop_cvc/create_user_hash.py
 ```
 
+For local Streamlit development, copy `.streamlit/secrets.toml.example` to
+`.streamlit/secrets.toml`, replace the three password-hash placeholders, and
+run the existing app:
+
+```bash
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+streamlit run Laptop_cvc/web_digital_twin.py
+```
+
+The real `secrets.toml` file is ignored by Git. For Streamlit Community Cloud,
+put the same `SVA_USERS_JSON` value in the app's Secrets settings instead.
+
 Configure users as a secret named `SVA_USERS_JSON`:
 
 ```json
