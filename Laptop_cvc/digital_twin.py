@@ -131,6 +131,7 @@ class DigitalTwin:
         self.live_publisher = MqttStatePublisher()
         self.v2x = V2XService()
         self.v2x_alerts = []
+        self.v2x_phase = 0
 
         # ====================================================
         # AUTONOMOUS RECOVERY
@@ -329,6 +330,66 @@ class DigitalTwin:
         self.canvas.pack(
             fill="both",
             expand=True,
+        )
+
+        self.canvas.create_rectangle(
+            70,
+            0,
+            430,
+            350,
+            fill="#1d3039",
+            outline="",
+        )
+        for x in (88, 412):
+            for y in range(24, 340, 48):
+                self.canvas.create_line(
+                    x,
+                    y,
+                    x,
+                    y + 24,
+                    fill="#d6b86a",
+                    width=2,
+                )
+
+        self.v2x_wave_items = [
+            self.canvas.create_oval(
+                82,
+                18,
+                418,
+                332,
+                outline="#4fd6e8",
+                width=2,
+                dash=(8, 12),
+                tags=("v2x_wave",),
+            ),
+            self.canvas.create_oval(
+                54,
+                2,
+                446,
+                348,
+                outline="#4fd6e8",
+                width=2,
+                dash=(8, 12),
+                tags=("v2x_wave",),
+            ),
+            self.canvas.create_oval(
+                24,
+                -16,
+                476,
+                366,
+                outline="#4fd6e8",
+                width=2,
+                dash=(8, 12),
+                tags=("v2x_wave",),
+            ),
+        ]
+
+        self.v2x_caption = self.canvas.create_text(
+            250,
+            22,
+            text="V2V LINK · SIMULATION",
+            fill="#7de8f5",
+            font=("Arial", 9, "bold"),
         )
 
         self.canvas.create_text(
@@ -2264,6 +2325,8 @@ class DigitalTwin:
                 self.v2x_alerts,
             )
 
+            self._animate_v2x()
+
             # =================================================
             # DATA LOGGING
             # =================================================
@@ -2315,6 +2378,25 @@ class DigitalTwin:
     # ========================================================
     # RENDER
     # ========================================================
+
+    def _animate_v2x(self) -> None:
+        """Animate the V2V field around the vehicle model."""
+        self.v2x_phase = (self.v2x_phase + 2) % 20
+        active = not self.hardware_mode or self.v2x.enabled or bool(self.v2x_alerts)
+        for index, item in enumerate(self.v2x_wave_items):
+            self.canvas.itemconfigure(
+                item,
+                state="normal" if active else "hidden",
+                dashoffset=self.v2x_phase + index * 6,
+            )
+        self.canvas.itemconfigure(
+            self.v2x_caption,
+            text=(
+                "V2V LINK · ACTIVE"
+                if self.v2x.enabled or self.v2x_alerts
+                else "V2V LINK · SIMULATION"
+            ),
+        )
 
     def _render(self) -> None:
 

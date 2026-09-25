@@ -338,6 +338,8 @@ def _vehicle_replica(
 
     cabin_state: dict[str, dict[str, str]],
 
+    v2x_active: bool = False,
+
 ) -> str:
 
     def zone_style(zone: str) -> tuple[str, str, str]:
@@ -424,6 +426,15 @@ def _vehicle_replica(
       .sva-muted {{ color: #9bb0b8; }}
       .zone-caption {{ fill: #e8f1f5; font: 700 15px Arial, sans-serif; }}
       .can-caption {{ fill: #9fc0ce; font: 12px monospace; }}
+            .road-mark {{ stroke: #d6b86a; stroke-width: 3; stroke-dasharray: 16 18; }}
+            .v2x-wave {{ fill: none; stroke: #4fd6e8; stroke-width: 2;
+                stroke-dasharray: 10 14; transform-box: fill-box; transform-origin: center;
+                animation: v2x-pulse 2.2s linear infinite; }}
+            .v2x-wave.wave-two {{ animation-delay: -.7s; }}
+            .v2x-wave.wave-three {{ animation-delay: -1.4s; }}
+            @keyframes v2x-pulse {{ from {{ opacity: .85; transform: scale(.94); }}
+                to {{ opacity: .15; transform: scale(1.08); }} }}
+            .v2x-label {{ fill: #7de8f5; font: 700 11px Arial, sans-serif; }}
       svg {{ display: block; }}
     </style>
     <div class="model-shell">
@@ -434,6 +445,16 @@ def _vehicle_replica(
 
            aria-label="Front cabin rear zonal vehicle model"
            height="510" preserveAspectRatio="xMidYMid meet">
+
+                <rect x="58" y="26" width="304" height="458" rx="8" fill="#1d3039"/>
+                <line x1="78" y1="32" x2="78" y2="480" class="road-mark"/>
+                <line x1="342" y1="32" x2="342" y2="480" class="road-mark"/>
+                <ellipse cx="210" cy="255" rx="165" ry="238" class="v2x-wave"/>
+                <ellipse cx="210" cy="255" rx="190" ry="260" class="v2x-wave wave-two"/>
+                <ellipse cx="210" cy="255" rx="218" ry="284" class="v2x-wave wave-three"/>
+                <text x="500" y="28" text-anchor="middle" class="v2x-label">
+                    V2V LINK — {v2x_status}
+                </text>
 
         <text x="210" y="22" text-anchor="middle" fill="#b8cbd3"
 
@@ -592,6 +613,8 @@ def _vehicle_replica(
         belt2=belt_colors[2],
 
         belt3=belt_colors[3],
+
+        v2x_status="ACTIVE" if v2x_active else "SIMULATION",
     ).strip()
 
 
@@ -999,7 +1022,12 @@ def _dashboard() -> None:
     vehicle, camera = st.columns([1.7, 1])
     with vehicle:
         components.html(
-            _vehicle_replica(faults, cabin_state),
+            _vehicle_replica(
+                faults,
+                cabin_state,
+                v2x_active=connection != "SIMULATION"
+                and bool(vehicle_state.get("v2x", {}).get("alerts")),
+            ),
             height=570,
             scrolling=False,
         )
