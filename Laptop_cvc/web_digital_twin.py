@@ -285,25 +285,12 @@ def _login() -> None:
 
         if submitted:
             configured_users = _users()
-            configured_user_id = next(
-                (
-                    configured_id
-                    for configured_id, configured_user in configured_users.items()
-                    if configured_id.lower() == user_id
-                    or configured_user["role"].lower() == user_id
-                ),
-                None,
-            )
-            user = (
-                configured_users.get(configured_user_id)
-                if configured_user_id
-                else None
-            )
+            user = configured_users.get(user_id)
             if user and _verify_password(password, user["password_hash"]):
                 st.session_state.authenticated = True
-                st.session_state.user_id = configured_user_id
+                st.session_state.user_id = user_id
                 st.session_state.role = user["role"]
-                _audit("LOGIN_SUCCESS", configured_user_id, user["role"])
+                _audit("LOGIN_SUCCESS", user_id, user["role"])
                 st.rerun()
 
             _audit("LOGIN_FAILURE", user_id, "invalid credentials")
