@@ -249,84 +249,64 @@ def _verify_password(password: str, encoded_hash: str) -> bool:
 
 
 def _login() -> None:
-
     st.markdown(
-
         '<div class="sva-title">SVA DIGITAL TWIN</div>'
-
         '<p class="sva-muted">Secure zonal vehicle architecture platform</p>',
-
         unsafe_allow_html=True,
-
     )
-
     st.divider()
 
     _, card, _ = st.columns([1, 2, 1])
-
     with card:
-
         st.subheader("SVA LOGIN")
-
         if not _users():
-
             st.warning(
-
                 "Authentication is not configured. Set SVA_USERS_JSON in the "
-
                 "deployment secrets before publishing this application."
-
             )
-
             return
 
-        with st.form("login_form"):
+        user_options = ("admin", "engineer", "viewer")
 
-            selected_role = st.selectbox(
-                "User ID category",
-                ROLES,
-            )
-            role_users = [
-                user_id
-                for user_id, configured_user in _users().items()
-                if configured_user["role"] == selected_role
-            ]
+        with st.form("login_form"):
             user_id = st.selectbox(
                 "User ID",
-                role_users,
-                disabled=not role_users,
+                user_options,
             )
-
             password = st.text_input(
-
-                "Password", type="password", autocomplete="current-password"
-
+                "Password",
+                type="password",
+                autocomplete="current-password",
             )
-
-            submitted = st.form_submit_button("LOGIN", use_container_width=True)
+            submitted = st.form_submit_button(
+                "LOGIN",
+                use_container_width=True,
+            )
 
         if submitted:
-
-            user = _users().get(user_id)
-
-            if (
-                user
-                and user["role"] == selected_role
-                and _verify_password(password, user["password_hash"])
-            ):
-
+            configured_users = _users()
+            configured_user_id = next(
+                (
+                    configured_id
+                    for configured_id, configured_user in configured_users.items()
+                    if configured_id.lower() == user_id
+                    or configured_user["role"].lower() == user_id
+                ),
+                None,
+            )
+            user = (
+                configured_users.get(configured_user_id)
+                if configured_user_id
+                else None
+            )
+            if user and _verify_password(password, user["password_hash"]):
                 st.session_state.authenticated = True
-
-                st.session_state.user_id = user_id
-
+                st.session_state.user_id = configured_user_id
                 st.session_state.role = user["role"]
-
-                _audit("LOGIN_SUCCESS", user_id, user["role"])
-
+                _audit("LOGIN_SUCCESS", configured_user_id, user["role"])
                 st.rerun()
 
-            _audit("LOGIN_FAILURE", user_id or "anonymous", "invalid credentials")
-
+            _audit("LOGIN_FAILURE", user_id, "invalid credentials")
             st.error("Access denied. Check your User ID and password.")
 
 
