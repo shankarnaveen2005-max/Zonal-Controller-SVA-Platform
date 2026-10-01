@@ -10,6 +10,8 @@ import hashlib
 
 import hmac
 
+from html import escape
+
 import json
 
 import os
@@ -620,10 +622,18 @@ def _vehicle_replica(
 
 def _rear_camera_panel(camera: dict[str, Any]) -> str:
 
+    status = escape(str(camera.get("status", "OFFLINE")))
+    signal = escape(str(camera.get("signal", "NO SIGNAL")))
+    location = escape(str(camera.get("location", "REAR")))
+    detection_status = escape(str(camera.get("detection_status", "UNAVAILABLE")))
+
     if camera.get("available"):
-        signal_text = "LIVE STREAM READY"
-        note = "Camera connected"
-        stream_url = str(camera.get("stream_url", ""))
+        signal_text = "CAMERA ACTIVE"
+        note = f"OpenCV detection: {detection_status}"
+        hazard = camera.get("hazard") or {}
+        if hazard:
+            note = f"{note} - {escape(str(hazard.get('severity', 'WARNING')))}"
+        stream_url = escape(str(camera.get("stream_url", "")), quote=True)
         stream_markup = (
             f'<video class="camera-feed" src="{stream_url}" '
             "autoplay muted controls playsinline></video>"
@@ -631,9 +641,15 @@ def _rear_camera_panel(camera: dict[str, Any]) -> str:
             else ""
         )
     else:
-        signal_text = camera.get("signal", "NO SIGNAL")
-        note = "Camera Not Connected"
+        signal_text = signal
+        note = escape(str(camera.get("error") or "Camera Not Connected"))
         stream_markup = ""
+
+    signal_color = (
+        "#ef6262"
+        if camera.get("hazard") or not camera.get("available")
+        else "#27c281"
+    )
 
     return dedent("""
 
@@ -662,7 +678,7 @@ def _rear_camera_panel(camera: dict[str, Any]) -> str:
 
         {stream_markup}
 
-        <div class="signal">{signal_text}</div>
+        <div class="signal" style="color: {signal_color}">{signal_text}</div>
 
         <div>{note}</div>
 
@@ -674,17 +690,18 @@ def _rear_camera_panel(camera: dict[str, Any]) -> str:
 
         Location: {location}</div>
 
-      <div class="sva-muted">Reserved for the future ESP32 camera stream</div>
+      <div class="sva-muted">OpenCV rear-path pedestrian monitor</div>
 
     </div>
 
     """).format(
-        status=camera.get("status", "OFFLINE"),
-        signal=camera.get("signal", "NO SIGNAL"),
-        location=camera.get("location", "REAR"),
+        status=status,
+        signal=signal,
+        location=location,
         signal_text=signal_text,
         note=note,
         stream_markup=stream_markup,
+        signal_color=signal_color,
     ).strip()
 
 

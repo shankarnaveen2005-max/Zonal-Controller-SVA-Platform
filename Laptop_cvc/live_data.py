@@ -8,19 +8,30 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-def _camera_state(rear: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _camera_state(
+    rear: dict[str, Any],
+    monitor_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    camera = {
         "available": bool(rear.get("camera_available", False)),
         "status": str(rear.get("camera_status", "OFFLINE")),
         "signal": str(rear.get("camera_signal", "NO SIGNAL")),
         "location": str(rear.get("camera_location", "REAR")),
         "stream_url": str(rear.get("camera_stream_url", "")),
+        "detection_status": "UNAVAILABLE",
+        "hazard": None,
+        "last_frame_at": None,
+        "error": None,
     }
+    if monitor_state is not None:
+        camera.update(monitor_state)
+    return camera
 
 
 def snapshot_from_cvc(
     cvc: Any,
     v2x_alerts: list[Any] | None = None,
+    camera_monitor_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Convert CVC zone state into the web/dashboard payload contract."""
     front = cvc.zones["FRONT"].telemetry
@@ -59,7 +70,7 @@ def snapshot_from_cvc(
             "rear_light": rear.get("rear_light", "UNKNOWN"),
             "wheel_rpm": rear.get("wheel_rpm", 0),
         },
-        "camera": _camera_state(rear),
+        "camera": _camera_state(rear, camera_monitor_state),
         "v2x": {
             "status": "ALERT" if alerts else "CLEAR",
             "alerts": alerts[-20:],

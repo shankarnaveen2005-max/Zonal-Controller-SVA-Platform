@@ -17,8 +17,10 @@ Features:
 import argparse
 import os
 import sys
+import threading
 import tkinter as tk
 from tkinter import ttk
+from typing import Any
 
 # Allow this file to import the dedicated Zonal_ECUs package when
 # launched directly as: python Laptop_cvc/digital_twin.py
@@ -63,6 +65,45 @@ AMBER = "#f3b33d"
 BLUE = "#6dd5fa"
 
 
+class _LandscapeCanvas:
+    """Rotate canvas drawing coordinates while preserving text orientation."""
+
+    def __init__(self, canvas: tk.Canvas) -> None:
+        self._canvas = canvas
+
+    def __getattr__(self, name: str) -> Any:
+        method = getattr(self._canvas, name)
+        if name not in {"create_line", "create_oval", "create_polygon", "create_rectangle", "create_text"}:
+            return method
+
+        def create(*args: Any, **kwargs: Any) -> Any:
+            coordinates = list(args)
+            if name in {"create_oval", "create_rectangle"}:
+                x1, y1, x2, y2 = coordinates[:4]
+                points = (self._point(x1, y1), self._point(x2, y2))
+                coordinates[:4] = (
+                    min(points[0][0], points[1][0]),
+                    min(points[0][1], points[1][1]),
+                    max(points[0][0], points[1][0]),
+                    max(points[0][1], points[1][1]),
+                )
+            elif name == "create_text":
+                coordinates[0:2] = self._point(*coordinates[:2])
+            else:
+                coordinates = [
+                    value
+                    for point in zip(coordinates[::2], coordinates[1::2])
+                    for value in self._point(*point)
+                ]
+            return method(*coordinates, **kwargs)
+
+        return create
+
+    @staticmethod
+    def _point(x: float, y: float) -> tuple[float, float]:
+        return y * 1.62 + 38, 425 - x
+
+
 # ============================================================
 # DIGITAL TWIN
 # ============================================================
@@ -74,6 +115,7 @@ class DigitalTwin:
         root: tk.Tk,
         port: str | None = None,
         baudrate: int = 115200,
+        camera_index: int | None = None,
     ) -> None:
 
         self.root = root
@@ -132,6 +174,27 @@ class DigitalTwin:
         self.v2x = V2XService()
         self.v2x_alerts = []
         self.v2x_phase = 0
+        self.camera_monitor_state = None
+        self.camera_stop_event = None
+        self.camera_thread = None
+
+        if camera_index is not None:
+            from rear_camera import CameraMonitorState, run_rear_camera
+
+            self.camera_monitor_state = CameraMonitorState()
+            self.camera_stop_event = threading.Event()
+            self.camera_thread = threading.Thread(
+                target=run_rear_camera,
+                kwargs={
+                    "camera_index": camera_index,
+                    "v2x_service": self.v2x,
+                    "display": False,
+                    "stop_event": self.camera_stop_event,
+                    "monitor_state": self.camera_monitor_state,
+                },
+                daemon=True,
+            )
+            self.camera_thread.start()
 
         # ====================================================
         # AUTONOMOUS RECOVERY
@@ -230,7 +293,7 @@ class DigitalTwin:
         body = tk.Frame(
             self.root,
             bg=BG,
-            height=400,
+            height=460,
         )
 
         body.pack(
@@ -246,6 +309,7 @@ class DigitalTwin:
         self._build_sidebar(body)
         self._build_bottom_panel()
 
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.tick()
 
     # ========================================================
@@ -270,7 +334,7 @@ class DigitalTwin:
             text="SOFTWARE VEHICLE ARCHITECTURE",
             fg=BLUE,
             bg=BG,
-            font=("Arial", 22, "bold"),
+            font=("Arial", 25, "bold"),
         ).pack(anchor="w")
 
         tk.Label(
@@ -283,7 +347,7 @@ class DigitalTwin:
             ),
             fg=TEXT,
             bg=BG,
-            font=("Arial", 10),
+            font=("Arial", 11),
         ).pack(anchor="w")
 
     # ========================================================
@@ -308,7 +372,7 @@ class DigitalTwin:
             text="LIVE VEHICLE MODEL",
             fg=TEXT,
             bg=PANEL,
-            font=("Arial", 11, "bold"),
+            font=("Arial", 18, "bold"),
             padx=12,
             pady=8,
         )
@@ -321,8 +385,8 @@ class DigitalTwin:
 
         self.canvas = tk.Canvas(
             panel,
-            width=500,
-            height=350,
+            width=760,
+            height=420,
             bg="#15232d",
             highlightthickness=0,
         )
@@ -331,8 +395,9 @@ class DigitalTwin:
             fill="both",
             expand=True,
         )
+        self._model_canvas = _LandscapeCanvas(self.canvas)
 
-        self.canvas.create_rectangle(
+        self._model_canvas.create_rectangle(
             70,
             0,
             430,
@@ -342,7 +407,7 @@ class DigitalTwin:
         )
         for x in (88, 412):
             for y in range(24, 340, 48):
-                self.canvas.create_line(
+                self._model_canvas.create_line(
                     x,
                     y,
                     x,
@@ -352,7 +417,7 @@ class DigitalTwin:
                 )
 
         self.v2x_wave_items = [
-            self.canvas.create_oval(
+            self._model_canvas.create_oval(
                 82,
                 18,
                 418,
@@ -362,7 +427,7 @@ class DigitalTwin:
                 dash=(8, 12),
                 tags=("v2x_wave",),
             ),
-            self.canvas.create_oval(
+            self._model_canvas.create_oval(
                 54,
                 2,
                 446,
@@ -372,7 +437,7 @@ class DigitalTwin:
                 dash=(8, 12),
                 tags=("v2x_wave",),
             ),
-            self.canvas.create_oval(
+            self._model_canvas.create_oval(
                 24,
                 -16,
                 476,
@@ -385,202 +450,180 @@ class DigitalTwin:
         ]
 
         self.v2x_caption = self.canvas.create_text(
-            250,
+            325,
             22,
             text="V2V LINK · SIMULATION",
             fill="#7de8f5",
-            font=("Arial", 9, "bold"),
+            font=("Arial", 13, "bold"),
         )
 
         self.canvas.create_text(
-            250,
-            15,
-            text="FRONT OF VEHICLE",
-            fill="#b8cbd3",
-            font=("Arial", 10, "bold"),
+            48,
+            175,
+            text="◀ FRONT",
+            fill="#d9e8ed",
+            font=("Arial", 18, "bold"),
         )
 
         self.canvas.create_text(
-            250,
-            335,
-            text="REAR OF VEHICLE",
-            fill="#b8cbd3",
-            font=("Arial", 10, "bold"),
+            610,
+            175,
+            text="REAR ▶",
+            fill="#d9e8ed",
+            font=("Arial", 18, "bold"),
         )
 
-        # Vehicle body
-        self.canvas.create_polygon(
-            150, 30,
-            350, 30,
-            375, 58,
-            375, 295,
-            350, 325,
-            150, 325,
-            125, 295,
-            125, 58,
+        # Vehicle body - stylized top-view passenger car
+        # The source coordinates are rotated and horizontally stretched by
+        # _LandscapeCanvas so the vehicle fills the landscape panel and
+        # keeps a recognizable long passenger-car proportion.
+        self._model_canvas.create_polygon(
+            # Distinct sedan silhouette: bumper -> hood -> cabin -> trunk.
+            190, 22, 310, 22,          # front bumper
+            338, 28, 354, 44,          # nose corners
+            362, 72, 366, 105,         # front fenders
+            354, 124,                   # A-pillar shoulder
+            354, 238,                   # straight cabin side
+            366, 252, 362, 286,         # rear fender
+            348, 310, 320, 328,         # trunk shoulder
+            180, 328, 152, 310,         # rear bumper/trunk
+            138, 286, 134, 252,         # rear fender
+            146, 238,                   # cabin side
+            146, 124,                   # A-pillar shoulder
+            134, 105, 138, 72,          # front fender
+            146, 44, 162, 28,           # nose corners
             fill="#0b1116",
-            outline="#91aab5",
-            width=3,
+            outline="#d3e2e8",
+            width=4,
         )
 
-        self.canvas.create_rectangle(
-            157, 42,
-            343, 103,
-            fill="#203b4a",
-            outline=BLUE,
-            width=2,
+        # Bonnet / hood
+        self._model_canvas.create_polygon(
+            165, 36, 335, 36, 350, 54, 352, 100, 148, 100, 150, 54,
+            fill="#172832", outline="#557581", width=2,
         )
 
-        self.canvas.create_polygon(
-            157, 108,
-            343, 108,
-            350, 245,
-            150, 245,
-            fill="#182c37",
-            outline="#557581",
-            width=2,
+        # Front windshield
+        self._model_canvas.create_polygon(
+            150, 108, 350, 108, 332, 138, 168, 138,
+            fill="#294857", outline="#8fb8c7", width=2,
         )
 
-        self.canvas.create_line(
-            160, 108,
-            340, 108,
-            fill="#a9c8d3",
-            width=2,
+        # Glass roof / cabin area
+        self._model_canvas.create_polygon(
+            168, 143, 332, 143, 342, 164, 342, 220, 332, 238,
+            168, 238, 158, 220, 158, 164,
+            fill="#182c37", outline="#557581", width=2,
         )
 
-        self.canvas.create_line(
-            150, 250,
-            350, 250,
-            fill="#557581",
-            width=2,
+        # Rear windshield
+        self._model_canvas.create_polygon(
+            160, 244, 340, 244, 330, 270, 170, 270,
+            fill="#294857", outline="#8fb8c7", width=2,
         )
 
-        self.canvas.create_rectangle(
-            150, 278,
-            350, 315,
-            fill="#18242b",
-            outline="#557581",
-            width=2,
+        # Rear deck / trunk
+        self._model_canvas.create_polygon(
+            170, 276, 330, 276, 350, 308, 150, 308,
+            fill="#172832", outline="#557581", width=2,
         )
 
-        # Wheels
-        for x in (112, 368):
+        # Centre roof line
+        self._model_canvas.create_line(
+            250, 143, 250, 238, fill="#6f8994", width=1, dash=(5, 5)
+        )
 
-            for y in (82, 235):
+        # Side mirrors
+        for x in (112, 374):
+            self._model_canvas.create_oval(
+                x, 112, x + 14, 132, fill="#111b21", outline="#91aab5", width=2
+            )
 
-                self.canvas.create_oval(
-                    x,
-                    y,
-                    x + 20,
-                    y + 48,
-                    fill="#05080a",
-                    outline="#738b95",
-                    width=2,
+        # Wheels with inner rims
+        for x in (105, 375):
+            for y in (72, 238):
+                self._model_canvas.create_oval(
+                    x, y, x + 24, y + 52,
+                    fill="#030608", outline="#738b95", width=2,
+                )
+                self._model_canvas.create_oval(
+                    x + 5, y + 10, x + 19, y + 42,
+                    fill="#26343b", outline="#8fa3ab", width=1,
                 )
 
-        # Lights
-        for x in (165, 315):
-
-            self.canvas.create_oval(
-                x,
-                34,
-                x + 20,
-                45,
-                fill="#f6d36b",
-                outline="#fff0a8",
+        # Headlights
+        for x in (166, 314):
+            self._model_canvas.create_oval(
+                x, 29, x + 22, 42, fill="#f6d36b", outline="#fff0a8", width=2
             )
 
-            self.canvas.create_oval(
-                x,
-                310,
-                x + 20,
-                321,
-                fill="#e85a5a",
-                outline="#ff9b9b",
+        # Tail lights
+        for x in (166, 314):
+            self._model_canvas.create_oval(
+                x, 312, x + 22, 325, fill="#e85a5a", outline="#ff9b9b", width=2
             )
 
-        self.canvas.create_line(
-            150, 32,
-            350, 32,
-            fill="#d8e7ec",
-            width=3,
+        # Front and rear bumpers
+        self._model_canvas.create_line(
+            185, 25, 315, 25, fill="#d8e7ec", width=4
+        )
+        self._model_canvas.create_line(
+            185, 329, 315, 329, fill="#657f8a", width=4
         )
 
-        self.canvas.create_line(
-            150, 323,
-            350, 323,
-            fill="#657f8a",
-            width=3,
+        # Zonal ECU overlays.  Each region is given enough longitudinal
+        # space for its ECU name and CAN IDs to remain inside the car.
+        self._zone(
+            "FRONT", 175, 45, 325, 118, "0x101 / 0x102"
         )
 
         self._zone(
-            "FRONT",
-            150,
-            42,
-            350,
-            100,
-            "0x101 / 0x102",
+            "CABIN", 165, 126, 335, 244, "0x201 / 0x202"
         )
 
         self._zone(
-            "CABIN",
-            140,
-            110,
-            360,
-            250,
-            "0x201 / 0x202",
-        )
-
-        self._zone(
-            "REAR",
-            150,
-            260,
-            350,
-            315,
-            "0x301 / 0x302",
+            "REAR", 175, 252, 325, 320, "0x301 / 0x302"
         )
 
         self._draw_car_details()
         self._build_camera_panel(model_area)
 
     def _build_camera_panel(self, parent: tk.Frame) -> None:
-        """Reserve a video-sized rear-camera area for future hardware input."""
+        """Reserve a rear-camera area for future hardware input."""
         panel = tk.LabelFrame(
             parent,
             text="REAR CAMERA",
             fg=TEXT,
             bg=PANEL,
-            font=("Arial", 11, "bold"),
-            padx=12,
-            pady=12,
-            width=310,
+            font=("Arial", 14, "bold"),
+            padx=10,
+            pady=10,
+            width=330,
         )
-        panel.pack(
-            side="right",
-            fill="y",
-            padx=(12, 0),
-        )
+        panel.pack(side="right", fill="y", padx=(12, 0))
         panel.pack_propagate(False)
 
         self.camera_screen = tk.Frame(panel, bg="#030609", height=210)
-        self.camera_screen.pack(fill="x", pady=(4, 12))
+        self.camera_screen.pack(fill="x", pady=(4, 10))
         self.camera_screen.pack_propagate(False)
+
         self.camera_title = tk.Label(
             self.camera_screen,
             text="NO SIGNAL",
-            fg="#dbe7eb",
+            fg=RED,
             bg="#030609",
-            font=("Arial", 22, "bold"),
+            font=("Arial", 20, "bold"),
         )
         self.camera_title.pack(expand=True)
+
         self.camera_message = tk.Label(
             self.camera_screen,
             text="Camera Not Connected",
-            fg="#8298a3",
+            fg="#9bb0b8",
             bg="#030609",
-            font=("Arial", 10),
+            font=("Arial", 12),
         )
-        self.camera_message.pack(pady=(0, 18))
+        self.camera_message.pack(pady=(0, 25))
 
         self.camera_status_label = tk.Label(
             panel,
@@ -592,104 +635,86 @@ class DigitalTwin:
             font=("Courier", 11, "bold"),
         )
         self.camera_status_label.pack(fill="x", pady=4)
+
         tk.Label(
             panel,
-            text="Reserved for ESP32 / rear-camera video stream",
+            text=(
+                "OpenCV rear-path monitor enabled with --rear-camera"
+                if self.camera_monitor_state is not None
+                else "Connect rear camera with --rear-camera"
+            ),
             fg="#9bb0b8",
             bg=PANEL,
             justify="left",
-            wraplength=270,
-            font=("Arial", 9),
-        ).pack(fill="x", pady=(18, 0))
+            wraplength=290,
+            font=("Arial", 11),
+        ).pack(fill="x", pady=(10, 0))
+
+    def close(self) -> None:
+        """Close network resources and the desktop twin."""
+        if self.camera_stop_event is not None:
+            self.camera_stop_event.set()
+            if self.camera_thread is not None:
+                self.camera_thread.join(timeout=2)
+        for service in (self.live_publisher, self.v2x):
+            close = getattr(service, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        self.root.destroy()
 
     # ========================================================
     # VEHICLE DETAILS
     # ========================================================
 
     def _draw_car_details(self) -> None:
+        """Draw doors, seats and cabin details inside the car silhouette."""
 
-        for side, x in (
-            ("left", 128),
-            ("right", 372),
-        ):
-
-            for position, y in (
-                ("front", 125),
-                ("rear", 195),
-            ):
-
-                key = (
-                    f"{position}_{side}"
+        # Four doors follow the side profile of the passenger compartment.
+        for side, x in (("left", 150), ("right", 350)):
+            for position, y in (("front", 145), ("rear", 194)):
+                key = f"{position}_{side}"
+                x2 = x + 9 if side == "left" else x - 9
+                self.door_items[key] = self._model_canvas.create_rectangle(
+                    x, y, x2, y + 40,
+                    fill="#28563f", outline=GREEN, width=2,
+                )
+                self._model_canvas.create_line(
+                    x2, y + 20,
+                    x2 + (7 if side == "left" else -7), y + 20,
+                    fill="#b3c5cc", width=2,
                 )
 
-                x2 = (
-                    x + 8
-                    if side == "left"
-                    else x - 8
-                )
-
-                self.door_items[key] = (
-                    self.canvas.create_rectangle(
-                        x,
-                        y,
-                        x2,
-                        y + 50,
-                        fill="#28563f",
-                        outline=GREEN,
-                        width=2,
-                    )
-                )
-
-                self.canvas.create_line(
-                    x2,
-                    y + 25,
-                    x2 + (
-                        8
-                        if side == "left"
-                        else -8
-                    ),
-                    y + 25,
-                    fill="#b3c5cc",
-                    width=2,
-                )
-
+        # Four seats.  Smaller seat shapes keep the CABIN ECU label readable.
         seats = {
-            "driver": (175, 125),
-            "front_passenger": (275, 125),
-            "rear_left": (175, 195),
-            "rear_right": (275, 195),
+            "driver": (180, 155),
+            "front_passenger": (270, 155),
+            "rear_left": (180, 202),
+            "rear_right": (270, 202),
         }
 
         for key, (x, y) in seats.items():
-
-            self.canvas.create_rectangle(
-                x,
-                y,
-                x + 50,
-                y + 48,
-                fill="#344b59",
-                outline="#b3c5cc",
-                width=2,
+            self._model_canvas.create_rectangle(
+                x, y, x + 48, y + 34,
+                fill="#344b59", outline="#b3c5cc", width=2,
+            )
+            # Headrest
+            self._model_canvas.create_rectangle(
+                x + 12, y + 3, x + 36, y + 9,
+                fill="#405c6a", outline="#78909a", width=1,
+            )
+            self.belt_items[key] = self._model_canvas.create_line(
+                x + 8, y + 9, x + 40, y + 29,
+                fill=GREEN, width=3,
             )
 
-            self.belt_items[key] = (
-                self.canvas.create_line(
-                    x + 8,
-                    y + 8,
-                    x + 42,
-                    y + 40,
-                    fill=GREEN,
-                    width=4,
-                )
-            )
-
-        self.canvas.create_text(
-            250,
-            185,
-            text="CABIN • 4 SEATS",
-            fill="#d2e0e5",
-            font=("Arial", 10, "bold"),
+        # Steering wheel on the driver side.
+        self._model_canvas.create_oval(
+            185, 143, 215, 166, outline="#d2e0e5", width=2
         )
+
 
     # ========================================================
     # ZONAL ECU GRAPHICS
@@ -705,7 +730,7 @@ class DigitalTwin:
         can_ids: str,
     ) -> None:
 
-        item = self.canvas.create_rectangle(
+        item = self._model_canvas.create_rectangle(
             x1,
             y1,
             x2,
@@ -717,20 +742,26 @@ class DigitalTwin:
 
         self.zone_items[zone] = item
 
-        self.canvas.create_text(
-            (x1 + x2) / 2,
-            (y1 + y2) / 2 - 8,
-            text=f"{zone} ZONAL ECU",
-            fill=TEXT,
-            font=("Arial", 13, "bold"),
-        )
+        # Keep the complete description inside its own zone.  The landscape
+        # coordinate transform makes the longitudinal zone dimension the
+        # available text width, so compact multi-line labels avoid overlap.
+        if zone == "CABIN":
+            label = f"CABIN ZONAL ECU\nCAN ID: {can_ids}"
+            label_font = ("Arial", 11, "bold")
+            text_width = 108
+        else:
+            label = f"{zone} ZONAL ECU\nCAN ID\n{can_ids}"
+            label_font = ("Arial", 10, "bold")
+            text_width = 64
 
-        self.canvas.create_text(
+        self._model_canvas.create_text(
             (x1 + x2) / 2,
-            (y1 + y2) / 2 + 16,
-            text=can_ids,
-            fill="#9fc0ce",
-            font=("Arial", 9),
+            (y1 + y2) / 2,
+            text=label,
+            fill=TEXT,
+            font=label_font,
+            width=text_width,
+            justify="center",
         )
 
     # ========================================================
@@ -747,7 +778,7 @@ class DigitalTwin:
             text="CVC / ESP32 GATEWAY",
             fg=TEXT,
             bg=PANEL,
-            font=("Arial", 11, "bold"),
+            font=("Arial", 12, "bold"),
             padx=4,
             pady=4,
             width=350,
@@ -922,7 +953,7 @@ class DigitalTwin:
             text="● STARTING",
             fg=AMBER,
             bg=PANEL,
-            font=("Arial", 14, "bold"),
+            font=("Arial", 16, "bold"),
         )
 
         self.health_label.pack(
@@ -945,7 +976,7 @@ class DigitalTwin:
             bg=PANEL,
             justify="left",
             anchor="w",
-            font=("Courier", 9),
+            font=("Courier", 10),
         )
 
         self.gateway_label.pack(
@@ -971,7 +1002,7 @@ class DigitalTwin:
             text="SELF-HEALING / RECOVERY",
             fg=BLUE,
             bg=PANEL,
-            font=("Arial", 9, "bold"),
+            font=("Arial", 10, "bold"),
         ).pack(
             anchor="w",
             padx=15,
@@ -988,7 +1019,7 @@ class DigitalTwin:
             bg=PANEL,
             justify="left",
             anchor="w",
-            font=("Courier", 8),
+            font=("Courier", 9),
         )
 
         self.recovery_label.pack(
@@ -1014,7 +1045,7 @@ class DigitalTwin:
             text="FAULT INJECTION",
             fg=AMBER,
             bg=PANEL,
-            font=("Arial", 9, "bold"),
+            font=("Arial", 10, "bold"),
         ).pack(
             anchor="w",
             padx=15,
@@ -1084,7 +1115,7 @@ class DigitalTwin:
             text="ML CONDITION SIMULATION",
             fg=BLUE,
             bg=PANEL,
-            font=("Arial", 9, "bold"),
+            font=("Arial", 10, "bold"),
         ).pack(
             anchor="w",
             padx=15,
@@ -1138,7 +1169,7 @@ class DigitalTwin:
             text="OTA FIRMWARE UPDATE",
             fg=BLUE,
             bg=PANEL,
-            font=("Arial", 9, "bold"),
+            font=("Arial", 10, "bold"),
         ).pack(
             anchor="w",
             padx=15,
@@ -1150,7 +1181,7 @@ class DigitalTwin:
             text="Target Zonal ECU",
             fg=TEXT,
             bg=PANEL,
-            font=("Arial", 9),
+            font=("Arial", 10),
         ).pack(
             anchor="w",
             padx=15,
@@ -1202,7 +1233,7 @@ class DigitalTwin:
             text="New Firmware Version",
             fg=TEXT,
             bg=PANEL,
-            font=("Arial", 9),
+            font=("Arial", 10),
         ).pack(
             anchor="w",
             padx=15,
@@ -1261,7 +1292,7 @@ class DigitalTwin:
                 text="Progress: 0%",
                 fg=TEXT,
                 bg=PANEL,
-                font=("Courier", 9),
+                font=("Courier", 10),
             )
         )
 
@@ -1308,7 +1339,7 @@ class DigitalTwin:
         panel = tk.Frame(
             self.root,
             bg=BG,
-            height=390,
+            height=440,
         )
 
         panel.pack(
@@ -1329,7 +1360,7 @@ class DigitalTwin:
             text="VEHICLE TELEMETRY",
             fg=TEXT,
             bg=PANEL,
-            font=("Arial", 11, "bold"),
+            font=("Arial", 15, "bold"),
             padx=12,
             pady=10,
         )
@@ -1350,7 +1381,7 @@ class DigitalTwin:
             bg=PANEL,
             justify="left",
             anchor="nw",
-            font=("Courier", 10, "bold"),
+            font=("Courier", 12, "bold"),
         )
 
         self.telemetry_label.pack(
@@ -1367,7 +1398,7 @@ class DigitalTwin:
             text="INTELLIGENT DIAGNOSTICS",
             fg=TEXT,
             bg=PANEL,
-            font=("Arial", 11, "bold"),
+            font=("Arial", 15, "bold"),
             padx=12,
             pady=10,
         )
@@ -1388,8 +1419,8 @@ class DigitalTwin:
             bg=PANEL,
             justify="left",
             anchor="nw",
-            font=("Courier", 10, "bold"),
-            wraplength=380,
+            font=("Courier", 12, "bold"),
+            wraplength=430,
         )
 
         self.diagnostic_label.pack(
@@ -1406,7 +1437,7 @@ class DigitalTwin:
             text="ML PREDICTIVE MAINTENANCE",
             fg=TEXT,
             bg=PANEL,
-            font=("Arial", 11, "bold"),
+            font=("Arial", 15, "bold"),
             padx=12,
             pady=10,
         )
@@ -1428,8 +1459,8 @@ class DigitalTwin:
             bg=PANEL,
             justify="left",
             anchor="nw",
-            font=("Courier", 10, "bold"),
-            wraplength=380,
+            font=("Courier", 12, "bold"),
+            wraplength=430,
         )
 
         self.ml_label.pack(
@@ -1706,30 +1737,50 @@ class DigitalTwin:
         self._render_ml()
 
     def _render_camera(self, rear: dict) -> None:
-        """Render rear-camera metadata in the dedicated camera panel."""
-        status = str(rear.get("camera_status", "OFFLINE")).upper()
-        signal = str(rear.get("camera_signal", "NO SIGNAL")).upper()
-        location = str(rear.get("camera_location", "REAR")).upper()
-        available = rear.get("camera_available", False)
-        ready = status == "ONLINE" and signal not in {"NO SIGNAL", "OFFLINE"}
-
-        if ready or available:
-            title = "CAMERA READY"
-            message = "Waiting for video stream"
-            color = GREEN
+        """Render OpenCV status when enabled, otherwise use ECU camera telemetry."""
+        if self.camera_monitor_state is not None:
+            camera = self.camera_monitor_state.snapshot()
+            status = str(camera["status"]).upper()
+            signal = str(camera["signal"]).upper()
+            location = str(camera["location"]).upper()
+            available = camera["available"]
+            hazard = camera["hazard"]
+            if available and hazard:
+                title = f"PEDESTRIAN {hazard.get('severity', 'WARNING')}"
+                message = "Detected in rear path"
+                color = RED
+            elif available:
+                title = "CAMERA ACTIVE"
+                message = "Rear path clear"
+                color = GREEN
+            elif camera["error"]:
+                title = "CAMERA ERROR"
+                message = str(camera["error"])
+                color = RED
+            else:
+                title = "CAMERA STARTING"
+                message = "Waiting for camera frames"
+                color = AMBER
         else:
-            title = "NO SIGNAL"
-            message = "Camera Not Connected"
-            color = RED
+            status = str(rear.get("camera_status", "OFFLINE")).upper()
+            signal = str(rear.get("camera_signal", "NO SIGNAL")).upper()
+            location = str(rear.get("camera_location", "REAR")).upper()
+            available = rear.get("camera_available", False)
+            ready = status == "ONLINE" and signal not in {"NO SIGNAL", "OFFLINE"}
+
+            if ready or available:
+                title = "CAMERA READY"
+                message = "Waiting for video stream"
+                color = GREEN
+            else:
+                title = "NO SIGNAL"
+                message = "Camera Not Connected"
+                color = RED
 
         self.camera_title.config(text=title, fg=color)
         self.camera_message.config(text=message)
         self.camera_status_label.config(
-            text=(
-                f"Status : {status}\n"
-                f"Signal : {signal}\n"
-                f"Location: {location}"
-            ),
+            text=f"Status : {status}\nSignal : {signal}\nLocation: {location}",
             fg=color,
         )
 
@@ -2336,6 +2387,8 @@ class DigitalTwin:
             )
 
             snapshot = self.cvc.vehicle_snapshot()
+            if self.camera_monitor_state is not None:
+                snapshot["camera"] = self.camera_monitor_state.snapshot()
             snapshot["v2x"] = {
                 "status": "ALERT" if self.v2x_alerts else "CLEAR",
                 "alerts": [
@@ -2790,6 +2843,19 @@ if __name__ == "__main__":
         default=115200,
     )
 
+    parser.add_argument(
+        "--rear-camera",
+        action="store_true",
+        help="Enable OpenCV rear pedestrian detection in the desktop Digital Twin",
+    )
+
+    parser.add_argument(
+        "--camera-index",
+        type=int,
+        default=0,
+        help="OpenCV camera device index used with --rear-camera",
+    )
+
     args = parser.parse_args()
 
     root = tk.Tk()
@@ -2798,6 +2864,7 @@ if __name__ == "__main__":
         root,
         args.port,
         args.baud,
+        args.camera_index if args.rear_camera else None,
     )
 
     root.mainloop()

@@ -105,6 +105,19 @@ def main() -> None:
         ),
     )
 
+    parser.add_argument(
+        "--rear-camera",
+        action="store_true",
+        help="Enable OpenCV rear pedestrian detection and V2X hazard alerts",
+    )
+
+    parser.add_argument(
+        "--camera-index",
+        type=int,
+        default=0,
+        help="OpenCV camera device index used with --rear-camera",
+    )
+
     args = parser.parse_args()
 
 
@@ -152,6 +165,29 @@ def main() -> None:
     logger = DataLogger()
     state_publisher = MqttStatePublisher()
     v2x = V2XService()
+
+    camera_monitor_state = None
+    camera_thread = None
+    camera_stop_event = None
+    if args.rear_camera:
+        import threading
+
+        from rear_camera import CameraMonitorState, run_rear_camera
+
+        camera_monitor_state = CameraMonitorState()
+        camera_stop_event = threading.Event()
+        camera_thread = threading.Thread(
+            target=run_rear_camera,
+            kwargs={
+                "camera_index": args.camera_index,
+                "v2x_service": v2x,
+                "display": False,
+                "stop_event": camera_stop_event,
+                "monitor_state": camera_monitor_state,
+            },
+            daemon=True,
+        )
+        camera_thread.start()
 
 
     # ========================================================
@@ -328,7 +364,11 @@ def main() -> None:
         cvc.poll()
 
         v2x_alerts = v2x.receive_alerts()
-        snapshot = snapshot_from_cvc(cvc, v2x_alerts)
+        snapshot = snapshot_from_cvc(
+            cvc,
+            v2x_alerts,
+            camera_monitor_state.snapshot() if camera_monitor_state else None,
+        )
         state_publisher.publish(snapshot)
         v2x.publish_basic_safety_message(snapshot)
 
@@ -496,6 +536,13 @@ def main() -> None:
         # ====================================================
 
         time.sleep(1)
+
+
+    if camera_stop_event is not None:
+        camera_stop_event.set()
+        if camera_thread is not None:
+            camera_thread.join(timeout=2)
+    v2x.close()
 
 
     # ========================================================

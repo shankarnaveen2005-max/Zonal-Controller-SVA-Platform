@@ -115,6 +115,23 @@ class V2XService:
             qos=1,
         )
 
+    def publish_safety_alert(self, hazard: dict[str, Any]) -> None:
+        """Publish a camera-detected rear-path hazard when MQTT is enabled."""
+        if self._client is None:
+            return
+
+        message = V2XMessage(
+            message_type="DENM",
+            station_id=self.vehicle_id,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            payload=dict(hazard),
+        )
+        self._client.publish(
+            self.publish_topic,
+            json.dumps(message.to_dict(), separators=(",", ":")),
+            qos=1,
+        )
+
     def receive_alerts(self) -> list[V2XMessage]:
         alerts: list[V2XMessage] = []
         while True:

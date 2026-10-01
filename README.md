@@ -125,6 +125,33 @@ duration:
 python main.py --duration 8
 ```
 
+Install the optional rear-camera dependency and start pedestrian detection with
+V2X hazard publishing:
+
+```bash
+python -m pip install -r ../requirements-camera.txt
+python main.py --rear-camera --camera-index 0
+```
+
+The camera monitor uses OpenCV's HOG pedestrian detector and publishes a
+rate-limited `DENM`-type MQTT alert when a pedestrian is repeatedly detected in
+the centered near-camera region. Camera availability, current detection state,
+and read errors are included in the vehicle snapshot for the web Digital Twin.
+To show the same status and detections in the desktop Digital Twin, run:
+
+```bash
+python digital_twin.py --rear-camera --camera-index 0
+```
+
+The desktop window's rear-camera panel displays the active/clear state, an
+alert severity, or a camera error. Without `--rear-camera`, it continues to
+display the rear ECU's camera telemetry.
+Configure `SVA_V2X_HOST` to enable MQTT alert publishing, and configure
+`SVA_MQTT_HOST` if the web Digital Twin should receive the vehicle snapshot.
+This prototype is an additional warning channel, not a certified
+collision-avoidance system; camera detection does not provide reliable distance
+or vehicle detection.
+
 When the ESP32 gateway is connected by USB, run the same applications in
 hardware mode:
 

@@ -118,7 +118,7 @@ class DirectCANTransport:
         self,
         channel: str = "can0",
         bustype: str = "socketcan",
-        bitrate: int = 500000,
+        bitrate: int = 500000,    
         **kwargs: Any,
     ) -> None:
         if can is None:
