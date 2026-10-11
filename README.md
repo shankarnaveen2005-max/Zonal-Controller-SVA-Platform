@@ -58,8 +58,9 @@ For Streamlit Community Cloud:
 The audit database defaults to `Laptop_cvc/sva_audit.db`. For a public
 deployment, set `SVA_AUDIT_DB` to persistent storage or replace the SQLite
 audit store with a managed database; ephemeral cloud files can be lost on
-redeploy. Never put `SVA_USERS_JSON`, password hashes, or database credentials
-in Git.
+redeploy. Audit timestamps are stored in UTC and displayed as India Standard
+Time (Asia/Kolkata) in the administrator audit report. Never put
+`SVA_USERS_JSON`, password hashes, or database credentials in Git.
 
 ### Live hardware data
 

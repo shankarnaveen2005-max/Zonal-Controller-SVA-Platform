@@ -31,6 +31,11 @@ from typing import Any
 import streamlit as st
 import streamlit.components.v1 as components
 
+if __package__:
+    from .audit_time import format_audit_timestamp
+else:
+    from audit_time import format_audit_timestamp
+
 try:
     import paho.mqtt.client as mqtt
 except ImportError:  # pragma: no cover - dependency is installed for deployment
@@ -171,6 +176,7 @@ def _audit(event: str, user_id: str = "anonymous", detail: str = "") -> None:
             (datetime.now(timezone.utc).isoformat(), user_id, event, detail[:240]),
 
         )
+
 
 
 
@@ -1429,7 +1435,16 @@ def _dashboard() -> None:
 
                 ).fetchall()
 
-            st.dataframe(rows, use_container_width=True, hide_index=True)
+            st.dataframe(
+                {
+                    "Time (IST)": [format_audit_timestamp(row[0]) for row in rows],
+                    "User ID": [row[1] for row in rows],
+                    "Event": [row[2] for row in rows],
+                    "Details": [row[3] for row in rows],
+                },
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 
